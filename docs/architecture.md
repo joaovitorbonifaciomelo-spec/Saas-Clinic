@@ -27,6 +27,20 @@ Supabase Auth com sessão em cookies, via `@supabase/ssr` 0.12.5.
 - **Não forçamos `httpOnly` nos cookies de sessão.** A biblioteca gerencia esses cookies e precisa lê-los; sobrescrever as flags quebraria o refresh silenciosamente. O cookie que é nosso — `active_clinic_id` — esse sim é `httpOnly`.
 - No middleware, a mesma `response` usada no `setAll` é a retornada. Criar uma resposta nova no final descartaria os cookies renovados.
 
+### Trigger de criação de perfil
+
+A migration de schema instala um trigger em `auth.users`:
+
+```sql
+create or replace function public.clinic_saas_handle_new_user() ...
+drop trigger if exists clinic_saas_on_auth_user_created on auth.users;
+create trigger clinic_saas_on_auth_user_created after insert on auth.users ...
+```
+
+Os nomes levam o prefixo `clinic_saas_` deliberadamente. Os nomes canônicos — `handle_new_user` e `on_auth_user_created` — aparecem em praticamente todo tutorial oficial do Supabase, e portanto são os mais prováveis de já existirem num projeto. Um `create or replace function` sobre um nome desses substituiria a função alheia **sem erro e sem aviso**, e a quebra só apareceria no próximo cadastro.
+
+O prefixo **não torna a colisão impossível** — qualquer nome pode colidir, e tanto o `drop trigger if exists` quanto o `create or replace` continuam substituindo silenciosamente um homônimo. O que ele faz é tornar a colisão _extremamente improvável_, por deixar de depender do nome mais disputado do ecossistema. Antes de aplicar num projeto que já tenha outra coisa rodando, verifique se esses dois nomes existem.
+
 Fluxo:
 
 1. Server actions (`signUpAction`, `signInAction`, `signOutAction`) chamam o Supabase **no servidor**; os cookies de sessão são escritos ali.
@@ -178,7 +192,32 @@ pnpm --filter @clinicas/api dev     # em outro terminal, para incluir os testes 
 pnpm test:isolation
 ```
 
-O teste monta o cenário, executa as asserções com o **JWT real de cada usuário** (portanto quem responde é o RLS) e limpa tudo ao final. Cobertura:
+O teste monta o cenário, executa as asserções com o **JWT real de cada usuário** (portanto quem responde é o RLS) e limpa tudo ao final.
+
+#### Trava de ambiente
+
+O teste cria e remove usuários reais usando `service_role`. Por isso exige `SUPABASE_TEST_ENVIRONMENT` igual a `development` ou `staging`; ausente ou com qualquer outro valor, ele **recusa executar**. A ausência é tratada como recusa, não como default permissivo — uma variável herdada do shell apontando para produção não deve poder rodar isto por acidente.
+
+#### Ciclo de vida dos recursos: sempre por ID
+
+Cada execução gera um `test_run_id` (UUID v4). Os usuários criados carregam esse id no `user_metadata`, o que torna a origem rastreável pelo painel do Supabase.
+
+O `TestResourceRegistry` registra cada recurso **imediatamente após criá-lo**, e persiste um manifesto em `supabase/tests/.runs/<test_run_id>.json` a cada registro — antes que o passo seguinte possa falhar. Isso fecha o vazamento em falha parcial: se a criação da clínica quebrar depois de o usuário já existir, o usuário está no manifesto e será removido.
+
+A limpeza no `afterAll` apaga **somente os IDs daquela execução**, na ordem clínicas → usuários (necessária porque `clinics.created_by` é `SET NULL`, então apagar o usuário não apaga a clínica). Se algo restar, o manifesto é preservado e o comando de limpeza é impresso.
+
+**Não existe varredura inicial do banco.** Uma versão anterior deste código procurava resíduo com `LIKE 'Clinica _ rlstest-%'` e apagava o que casasse. Isso é inaceitável: é uma heurística de nome executada com `service_role` (que ignora RLS) cuja exclusão cascateia para `patients`. Uma clínica legítima com nome parecido seria destruída junto com todos os seus pacientes. Foi removido.
+
+Resíduo de execução interrompida é tratado explicitamente:
+
+```bash
+pnpm test:isolation:cleanup --list
+pnpm test:isolation:cleanup <test_run_id>
+```
+
+O script só apaga IDs listados no manifesto, e antes valida que o manifesto pertence ao mesmo projeto que o `.env.test` aponta — limpar IDs de um projeto com credenciais de outro apagaria as linhas erradas caso os UUIDs coincidissem. O princípio: **deixar resíduo de teste é preferível a qualquer query de limpeza capaz de alcançar dado legítimo.**
+
+Cobertura das asserções:
 
 1. **Leitura** — A lista só o Paciente A; pedir explicitamente o id do Paciente B retorna vazio; filtrar por `clinic_id` da Clínica B retorna vazio.
 2. **Escrita cruzada** — A não altera, não exclui e não insere na Clínica B; a tentativa de INSERT falha com `42501`; mover o próprio paciente para a Clínica B falha.

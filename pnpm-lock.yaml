@@ -11,9 +11,15 @@ importers:
       '@clinicas/config':
         specifier: workspace:*
         version: link:packages/config
+      '@supabase/supabase-js':
+        specifier: 2.112.4
+        version: 2.112.4
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
       eslint:
         specifier: 10.9.1
         version: 10.9.1(supports-color@8.1.1)

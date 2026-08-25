@@ -12,6 +12,9 @@ coverage/
 !.env.example
 !.env.test.example
 
+# Manifestos de execucao do teste de isolamento (contem IDs de recursos efemeros)
+supabase/tests/.runs/
+
 # Supabase CLI
 supabase/.temp/
 supabase/.branches/

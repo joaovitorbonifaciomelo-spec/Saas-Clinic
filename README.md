@@ -103,6 +103,8 @@ pnpm db:push
 
 Depois disso, em Authentication → Providers → Email, **desative "Confirm email"** para desenvolvimento. Com a confirmação ligada, o cadastro pela tela não cria sessão imediatamente.
 
+> ⚠️ Esta migration **instala um trigger em `auth.users`**, chamado `clinic_saas_on_auth_user_created`, apoiado na função `public.clinic_saas_handle_new_user()`. Antes de aplicar num projeto que já tenha outra coisa rodando, confirme que esses dois nomes não existem — a migration usa `drop trigger if exists` e `create or replace function`, que substituiriam objetos homônimos sem erro nem aviso.
+
 ---
 
 ## Rodar
@@ -139,6 +141,21 @@ pnpm test:isolation
 ```
 
 O teste monta sozinho o cenário Usuário A → Clínica A → Paciente A e Usuário B → Clínica B → Paciente B, verifica que nenhum lado enxerga nem altera o dado do outro — inclusive com requisição manual usando o ID alheio e com `X-Clinic-Id` forjado — e limpa tudo ao final. É reexecutável.
+
+> ⚠️ **Somente `development` ou `staging`.** O teste cria e remove usuários reais com `service_role`. Ele exige `SUPABASE_TEST_ENVIRONMENT=development` (ou `staging`) no `.env.test` e **recusa executar** se a variável estiver ausente ou com outro valor. Nunca aponte para produção.
+
+#### Limpeza de execução interrompida
+
+Cada execução gera um `test_run_id` (UUID) e grava um manifesto em `supabase/tests/.runs/<test_run_id>.json` com os IDs exatos criados — antes que qualquer coisa possa falhar. Em condições normais o manifesto é apagado no fim.
+
+Se o processo for interrompido, o resíduo é removido **explicitamente por ID**:
+
+```bash
+pnpm test:isolation:cleanup --list          # execuções com resíduo pendente
+pnpm test:isolation:cleanup <test_run_id>   # remove só os IDs daquela execução
+```
+
+**Não existe varredura automática do banco.** Nada de `LIKE`, prefixo de nome ou `delete where name...`: se o manifesto não listar o recurso, nenhum script o toca. Deixar um resíduo de teste esquecido custa muito menos do que uma query de limpeza que alcance dado legítimo.
 
 ---
 

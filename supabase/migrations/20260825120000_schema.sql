@@ -105,9 +105,21 @@ create trigger patients_set_updated_at
 
 -- -----------------------------------------------------------------------------
 -- Criacao automatica do profile no cadastro.
+--
 -- SECURITY DEFINER porque roda no contexto do signup, antes de existir sessao.
+--
+-- SOBRE O NOME: `handle_new_user` e `on_auth_user_created` sao os nomes usados
+-- em praticamente todo tutorial oficial do Supabase, entao sao os mais provaveis
+-- de ja existirem num projeto qualquer. Um `create or replace function` sobre um
+-- nome desses substituiria a funcao alheia SEM ERRO e sem aviso, e a quebra so
+-- apareceria no proximo cadastro.
+--
+-- O prefixo `clinic_saas_` nao torna a colisao impossivel — qualquer nome pode
+-- colidir. Torna-a extremamente improvavel, porque deixa de depender do nome
+-- mais disputado do ecossistema. Esta migration INSTALA UM TRIGGER EM auth.users:
+-- verifique se `clinic_saas_on_auth_user_created` ja existe antes de aplicar.
 -- -----------------------------------------------------------------------------
-create or replace function public.handle_new_user()
+create or replace function public.clinic_saas_handle_new_user()
 returns trigger
 language plpgsql
 security definer
@@ -127,7 +139,7 @@ begin
 end;
 $$;
 
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
+drop trigger if exists clinic_saas_on_auth_user_created on auth.users;
+create trigger clinic_saas_on_auth_user_created
   after insert on auth.users
-  for each row execute function public.handle_new_user();
+  for each row execute function public.clinic_saas_handle_new_user();

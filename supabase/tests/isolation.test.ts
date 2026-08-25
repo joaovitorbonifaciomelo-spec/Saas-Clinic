@@ -20,12 +20,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  cleanupLeftovers,
   createActor,
   createAdminClient,
   createAnonClient,
   loadIsolationEnv,
-  teardown,
+  TestResourceRegistry,
   type IsolationEnv,
   type TestActor,
 } from './helpers'
@@ -34,6 +33,7 @@ const UUID_INEXISTENTE = '00000000-0000-4000-8000-000000000000'
 
 let env: IsolationEnv
 let admin: SupabaseClient
+let registry: TestResourceRegistry
 let alice: TestActor
 let bob: TestActor
 let apiOnline = false
@@ -52,11 +52,14 @@ async function apiGet(
 beforeAll(async () => {
   env = loadIsolationEnv()
   admin = createAdminClient(env)
-  await cleanupLeftovers(admin)
 
-  const runId = `rlstest-${Date.now()}`
-  alice = await createActor(env, admin, 'a', runId)
-  bob = await createActor(env, admin, 'b', runId)
+  // Sem varredura inicial do banco: nada de `like`, prefixo ou busca por nome.
+  // O registry rastreia por ID o que ESTA execucao criar.
+  registry = new TestResourceRegistry(env.url)
+  console.log(`test_run_id desta execucao: ${registry.testRunId}`)
+
+  alice = await createActor(env, admin, registry, 'a')
+  bob = await createActor(env, admin, registry, 'b')
 
   try {
     const health = await fetch(`${env.apiUrl}/api/health`)
@@ -67,12 +70,10 @@ beforeAll(async () => {
 }, 120_000)
 
 afterAll(async () => {
-  if (admin) {
-    await teardown(
-      admin,
-      [alice?.clinicId, bob?.clinicId].filter(Boolean) as string[],
-      [alice?.userId, bob?.userId].filter(Boolean) as string[],
-    )
+  // Roda mesmo se o beforeAll falhar no meio: o registry ja tem o que foi criado
+  // ate o ponto da falha, entao a falha parcial nao vaza recurso.
+  if (admin && registry) {
+    await registry.cleanup(admin)
   }
 }, 120_000)
 
