@@ -96,10 +96,32 @@ pnpm check:secrets
 ```bash
 pnpm supabase login
 pnpm supabase link --project-ref SEU_PROJECT_REF
-pnpm db:push
+
+pnpm db:preflight    # mostra o alvo, NUNCA aplica
+pnpm db:push         # mostra o alvo e exige confirmação
 ```
 
 `db push` funciona contra um projeto hospedado **sem Docker**. Só `supabase start` e `db diff` exigem Docker.
+
+### Portão de confirmação
+
+`pnpm db:push` não chama o Supabase CLI direto. Ele passa por `scripts/db-push.mjs`, que **imprime o alvo antes de qualquer coisa** e aborta se:
+
+- não houver projeto linkado;
+- `SUPABASE_TEST_ENVIRONMENT` não for `development` ou `staging` — **produção é bloqueada**;
+- o project ref linkado divergir do que o `.env.test` aponta (o sintoma clássico de "linkei um, configurei outro" — o push iria para o linkado);
+- o `.env.test` ainda tiver placeholders não preenchidos;
+- a confirmação não bater com o project ref.
+
+Em terminal interativo, ele pede que você **digite o project ref**. Em execução não-interativa (CI, script), exige `--confirm <project-ref>`:
+
+```bash
+pnpm db:push --confirm SEU_PROJECT_REF
+```
+
+O script imprime apenas identificadores públicos — project ref, host e nomes de arquivo. **Nunca chave, senha ou connection string.** Ele sequer lê `SUPABASE_SERVICE_ROLE_KEY` ou `SUPABASE_DB_URL`.
+
+`pnpm db:push:raw` existe como escape hatch para o comando cru do CLI, sem nenhuma trava. Prefira o portão.
 
 Depois disso, em Authentication → Providers → Email, **desative "Confirm email"** para desenvolvimento. Com a confirmação ligada, o cadastro pela tela não cria sessão imediatamente.
 
@@ -154,6 +176,14 @@ Se o processo for interrompido, o resíduo é removido **explicitamente por ID**
 pnpm test:isolation:cleanup --list          # execuções com resíduo pendente
 pnpm test:isolation:cleanup <test_run_id>   # remove só os IDs daquela execução
 ```
+
+O script de limpeza carrega as mesmas travas do teste, verificadas nesta ordem antes de tocar em qualquer coisa:
+
+1. o argumento precisa ser **um** `test_run_id` em formato UUID v4 exato — `--all`, `*`, `.`, `..` e caminhos são recusados por nome, e mais de um argumento é erro. **Não existe modo "limpar todos", por design**;
+2. `SUPABASE_TEST_ENVIRONMENT` precisa ser `development` ou `staging`;
+3. o manifesto precisa pertencer ao mesmo projeto que o `.env.test` aponta.
+
+A validação de UUID também fecha travessia de caminho: sem ela, `../../algo` sairia do diretório de manifestos.
 
 **Não existe varredura automática do banco.** Nada de `LIKE`, prefixo de nome ou `delete where name...`: se o manifesto não listar o recurso, nenhum script o toca. Deixar um resíduo de teste esquecido custa muito menos do que uma query de limpeza que alcance dado legítimo.
 

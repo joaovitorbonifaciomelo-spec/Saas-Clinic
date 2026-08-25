@@ -42,7 +42,68 @@ function listRuns() {
   }
 }
 
+/** UUID v4 canonico. Qualquer outra coisa e recusada. */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+/**
+ * Recusa tudo que nao seja um test_run_id exato.
+ *
+ * Alem de barrar coringa e "limpar tudo", isto fecha travessia de caminho: sem
+ * validacao, `../../algo` sairia de MANIFEST_DIR e faria o script obedecer a um
+ * arquivo arbitrario.
+ */
+function assertValidTestRunId(value) {
+  const forbidden = ['--all', '-a', 'all', '*', '.', '..']
+  if (forbidden.includes(value.toLowerCase())) {
+    console.error(`Recusado: "${value}".`)
+    console.error(
+      'Nao existe modo "limpar todos". Cada execucao e limpa individualmente pelo seu test_run_id.',
+    )
+    console.error('Rode com --list para ver as execucoes pendentes.')
+    process.exit(1)
+  }
+
+  if (!UUID_V4.test(value)) {
+    console.error(`test_run_id invalido: "${value}".`)
+    console.error('Deve ser o UUID exato de UMA execucao (veja --list).')
+    process.exit(1)
+  }
+}
+
+/**
+ * Trava de ambiente. Roda ANTES de ler manifesto ou tocar em qualquer coisa:
+ * uma credencial de producao herdada do shell precisa ser barrada no primeiro
+ * passo, nao depois que o script ja comecou a agir.
+ */
+function requireTestEnvironment() {
+  const environment = process.env.SUPABASE_TEST_ENVIRONMENT
+
+  if (environment !== 'development' && environment !== 'staging') {
+    console.error(
+      `SUPABASE_TEST_ENVIRONMENT deve ser development ou staging ` +
+        `(recebido: ${environment ?? 'nao definido'}).`,
+    )
+    console.error(
+      'Este script remove usuarios e clinicas com service_role e NUNCA deve rodar contra producao.',
+    )
+    process.exit(1)
+  }
+
+  const url = process.env.SUPABASE_URL
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !serviceRoleKey) {
+    console.error('SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY sao obrigatorias no .env.test.')
+    process.exit(1)
+  }
+
+  return { url, serviceRoleKey, environment }
+}
+
 async function cleanup(testRunId) {
+  assertValidTestRunId(testRunId)
+  const { url, serviceRoleKey, environment } = requireTestEnvironment()
+
   const manifestPath = join(MANIFEST_DIR, `${testRunId}.json`)
   if (!existsSync(manifestPath)) {
     console.error(`Manifesto nao encontrado: ${manifestPath}`)
@@ -51,21 +112,6 @@ async function cleanup(testRunId) {
   }
 
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-  const url = process.env.SUPABASE_URL
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const environment = process.env.SUPABASE_TEST_ENVIRONMENT
-
-  if (!url || !serviceRoleKey) {
-    console.error('SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY sao obrigatorias no .env.test.')
-    process.exit(1)
-  }
-
-  if (environment !== 'development' && environment !== 'staging') {
-    console.error(
-      `SUPABASE_TEST_ENVIRONMENT deve ser development ou staging (recebido: ${environment ?? 'nao definido'}).`,
-    )
-    process.exit(1)
-  }
 
   // O manifesto guarda contra qual projeto os recursos foram criados. Limpar
   // IDs de um projeto usando as credenciais de outro seria apagar as linhas
@@ -76,6 +122,12 @@ async function cleanup(testRunId) {
     )
     process.exit(1)
   }
+
+  console.log(`Ambiente declarado : ${environment}`)
+  console.log(`Projeto            : ${url}`)
+  console.log(
+    `Alvo               : ${manifest.userIds.length} usuario(s), ${manifest.clinicIds.length} clinica(s)`,
+  )
 
   const admin = createClient(url, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -111,13 +163,20 @@ async function cleanup(testRunId) {
   console.log('Limpeza concluida.')
 }
 
-const arg = process.argv[2]
+const args = process.argv.slice(2)
 
-if (!arg || arg === '--list') {
+if (args.length > 1) {
+  console.error('Informe exatamente UM test_run_id. Limpeza em lote nao existe por design.')
+  process.exit(1)
+}
+
+const arg = args[0]
+
+if (!arg) {
   listRuns()
-  if (!arg) {
-    console.log('\nUso: pnpm test:isolation:cleanup <test_run_id>')
-  }
+  console.log('\nUso: pnpm test:isolation:cleanup <test_run_id>')
+} else if (arg === '--list') {
+  listRuns()
 } else {
   await cleanup(arg)
 }

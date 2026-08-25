@@ -20,7 +20,9 @@
     "test:isolation": "pnpm build:shared && vitest run --project isolation",
     "test:isolation:cleanup": "node scripts/cleanup-test-run.mjs",
     "check:secrets": "node scripts/check-secret-boundaries.mjs",
-    "db:push": "supabase db push",
+    "db:preflight": "node scripts/db-push.mjs --check",
+    "db:push": "node scripts/db-push.mjs",
+    "db:push:raw": "supabase db push",
     "db:diff": "supabase db diff"
   },
   "devDependencies": {

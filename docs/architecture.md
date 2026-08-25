@@ -215,7 +215,19 @@ pnpm test:isolation:cleanup --list
 pnpm test:isolation:cleanup <test_run_id>
 ```
 
-O script só apaga IDs listados no manifesto, e antes valida que o manifesto pertence ao mesmo projeto que o `.env.test` aponta — limpar IDs de um projeto com credenciais de outro apagaria as linhas erradas caso os UUIDs coincidissem. O princípio: **deixar resíduo de teste é preferível a qualquer query de limpeza capaz de alcançar dado legítimo.**
+O script só apaga IDs listados no manifesto. Antes de tocar em qualquer coisa, ele valida nesta ordem: (1) o argumento é **um** `test_run_id` em UUID v4 exato — `--all`, `*`, `.`, `..` e caminhos são recusados, e mais de um argumento é erro, porque **não existe modo "limpar todos"**; (2) `SUPABASE_TEST_ENVIRONMENT` é `development` ou `staging`; (3) o manifesto pertence ao mesmo projeto que o `.env.test` aponta — limpar IDs de um projeto com credenciais de outro apagaria as linhas erradas caso os UUIDs coincidissem.
+
+A validação de UUID cumpre um segundo papel: sem ela, um argumento como `../../algo` escaparia do diretório de manifestos e faria o script obedecer a um arquivo arbitrário.
+
+O princípio: **deixar resíduo de teste é preferível a qualquer query de limpeza capaz de alcançar dado legítimo.**
+
+### Portão de confirmação do `db:push`
+
+Aplicar migration no projeto errado é irreversível na prática, e o erro é banal — dois projetos abertos, um `link` antigo esquecido. Por isso `pnpm db:push` passa por `scripts/db-push.mjs`, que imprime o alvo (project ref linkado, host, ambiente declarado, lista de migrations) **antes** de qualquer ação e aborta se: não houver projeto linkado; o ambiente declarado não for `development`/`staging`; o ref linkado divergir do `.env.test`; o `.env.test` ainda tiver placeholders; ou a confirmação não bater com o project ref.
+
+A confirmação é interativa (digitar o ref) quando há TTY, e `--confirm <ref>` quando não há — nunca um `-y` que aceite qualquer coisa.
+
+O script lê apenas `SUPABASE_TEST_ENVIRONMENT` e `SUPABASE_URL`, e imprime somente identificadores públicos. Não conhece `SUPABASE_SERVICE_ROLE_KEY` nem `SUPABASE_DB_URL`, então não tem como vazá-los.
 
 Cobertura das asserções:
 
