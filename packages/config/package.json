@@ -1,0 +1,17 @@
+{
+  "name": "@clinicas/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Presets compartilhados de TypeScript, ESLint e Prettier.",
+  "type": "module",
+  "exports": {
+    "./tsconfig/node.json": "./tsconfig/node.json",
+    "./tsconfig/next.json": "./tsconfig/next.json",
+    "./eslint/base.mjs": "./eslint/base.mjs",
+    "./prettier.json": "./prettier.json"
+  },
+  "dependencies": {
+    "@eslint/js": "10.0.1",
+    "typescript-eslint": "8.68.0"
+  }
+}

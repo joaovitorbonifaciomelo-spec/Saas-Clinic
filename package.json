@@ -1,0 +1,35 @@
+{
+  "name": "clinicas-saas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SaaS multi-clinica - fundacao v0.1 (auth, multi-tenancy, RLS)",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "build:shared": "pnpm --filter @clinicas/shared build",
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm build:shared && pnpm -r typecheck",
+    "test": "pnpm build:shared && vitest run --project shared --project api",
+    "test:isolation": "pnpm build:shared && vitest run --project isolation",
+    "check:secrets": "node scripts/check-secret-boundaries.mjs",
+    "db:push": "supabase db push",
+    "db:diff": "supabase db diff"
+  },
+  "devDependencies": {
+    "@clinicas/config": "workspace:*",
+    "@types/node": "24.13.3",
+    "eslint": "10.9.1",
+    "prettier": "3.9.6",
+    "supabase": "2.115.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.68.0",
+    "vitest": "4.1.11"
+  }
+}

@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Segredos: nenhum arquivo de ambiente entra no git.
+.env
+.env.*
+!.env.example
+!.env.test.example
+
+# Supabase CLI
+supabase/.temp/
+supabase/.branches/
+
+.DS_Store
+Thumbs.db
+*.log

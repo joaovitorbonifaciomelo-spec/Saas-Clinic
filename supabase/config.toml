@@ -1,0 +1,6 @@
+# Configuracao minima do Supabase CLI. O desenvolvimento usa um projeto
+# gerenciado (supabase link + db push), nao a stack local via Docker.
+project_id = "clinicas-saas"
+
+[db]
+major_version = 15

@@ -1,0 +1,19 @@
+{
+  "name": "@clinicas/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tipos, contratos de API e schemas de validacao compartilhados entre web e api.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@clinicas/config": "workspace:*",
+    "typescript": "6.0.3"
+  }
+}
