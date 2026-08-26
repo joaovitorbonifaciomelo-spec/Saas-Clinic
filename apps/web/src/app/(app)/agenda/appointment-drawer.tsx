@@ -25,6 +25,9 @@ interface AppointmentDrawerProps {
   professionals: Professional[]
   services: Service[]
   defaultDate?: string
+  defaultTime?: string
+  defaultProfessionalId?: string
+  defaultPatientId?: string
   appointment?: AppointmentWithRelations
   onClose: () => void
   onSaved: () => void
@@ -46,10 +49,12 @@ export function AppointmentDrawer(props: AppointmentDrawerProps) {
     editing ? localDateKey(new Date(editing.startsAt), props.timezone) : (props.defaultDate ?? ''),
   )
   const [startTime, setStartTime] = useState(
-    editing ? localTimeLabel(editing.startsAt, props.timezone) : '09:00',
+    editing ? localTimeLabel(editing.startsAt, props.timezone) : (props.defaultTime ?? '09:00'),
   )
   const [endTime, setEndTime] = useState(
-    editing ? localTimeLabel(editing.endsAt, props.timezone) : '09:30',
+    editing
+      ? localTimeLabel(editing.endsAt, props.timezone)
+      : addMinutes(props.defaultTime ?? '09:00', 30),
   )
   const [serviceId, setServiceId] = useState(editing?.serviceId ?? '')
 
@@ -102,7 +107,11 @@ export function AppointmentDrawer(props: AppointmentDrawerProps) {
 
           <label>
             Paciente
-            <select name="patientId" required defaultValue={editing?.patientId ?? ''}>
+            <select
+              name="patientId"
+              required
+              defaultValue={editing?.patientId ?? props.defaultPatientId ?? ''}
+            >
               <option value="">Selecione…</option>
               {props.patients.map((patient) => (
                 <option key={patient.id} value={patient.id}>
@@ -114,7 +123,11 @@ export function AppointmentDrawer(props: AppointmentDrawerProps) {
 
           <label>
             Profissional
-            <select name="professionalId" required defaultValue={editing?.professionalId ?? ''}>
+            <select
+              name="professionalId"
+              required
+              defaultValue={editing?.professionalId ?? props.defaultProfessionalId ?? ''}
+            >
               <option value="">Selecione…</option>
               {props.professionals.map((professional) => (
                 <option key={professional.id} value={professional.id}>

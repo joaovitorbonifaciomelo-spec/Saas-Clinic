@@ -14,8 +14,8 @@ import {
   type Professional,
   type Service,
 } from '@clinicas/shared'
-import { ApiError, apiFetch } from '../../lib/api'
-import { requireActiveSession } from '../session'
+import { ApiError, apiFetch } from '../../../lib/api'
+import { requireActiveSession } from '../../session'
 
 export interface AgendaActionState {
   error: string | null

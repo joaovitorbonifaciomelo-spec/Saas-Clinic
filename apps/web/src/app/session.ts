@@ -1,3 +1,4 @@
+import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import type { ClinicMembership, UserProfile } from '@clinicas/shared'
 import { ApiError, fetchMe, readActiveClinicCookie, resolveActiveClinicId } from '../lib/api'
@@ -53,3 +54,13 @@ export async function requireActiveSession(): Promise<ActiveSession> {
 
   return { profile: me.profile, memberships: me.memberships, activeClinic }
 }
+
+/**
+ * Versao memoizada por requisicao.
+ *
+ * O shell (layout) e a pagina precisam do mesmo contexto. Sem `cache`, cada
+ * render faria DUAS chamadas a /api/me — e cada ida e volta custa ~250ms pela
+ * infraestrutura temporaria. O `cache` do React dedupa dentro do mesmo render,
+ * entao colocar o nome da clinica na topbar sai de graca.
+ */
+export const getActiveSession = cache(requireActiveSession)

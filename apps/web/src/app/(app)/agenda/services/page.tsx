@@ -1,13 +1,13 @@
 import Link from 'next/link'
 import type { Service } from '@clinicas/shared'
-import { apiFetch } from '../../../lib/api'
-import { requireActiveSession } from '../../session'
+import { apiFetch } from '../../../../lib/api'
+import { getActiveSession } from '../../../session'
 import { ServicesManager } from './services-manager'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ServicesPage() {
-  const { activeClinic } = await requireActiveSession()
+  const { activeClinic } = await getActiveSession()
   const services = await apiFetch<Service[]>('/api/services', {
     clinicId: activeClinic.clinicId,
   })

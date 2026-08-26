@@ -1,12 +1,12 @@
 import Link from 'next/link'
-import { requireActiveSession } from '../../session'
+import { getActiveSession } from '../../../session'
 import { createPatientAction } from '../patient-actions'
 import { PatientForm } from '../patient-form'
 
 export const dynamic = 'force-dynamic'
 
 export default async function NewPatientPage() {
-  await requireActiveSession()
+  await getActiveSession()
 
   return (
     <main className="container narrow">

@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import type {
   AppointmentWithRelations,
   AvailabilityBlock,
@@ -6,20 +5,26 @@ import type {
   Professional,
   Service,
 } from '@clinicas/shared'
-import { apiFetch } from '../../lib/api'
-import { requireActiveSession } from '../session'
+import { apiFetch } from '../../../lib/api'
+import { getActiveSession } from '../../session'
 import { localDateKey, rangeFor } from './agenda-time'
 import { AgendaView } from './agenda-view'
 
 export const dynamic = 'force-dynamic'
 
 interface AgendaPageProps {
-  searchParams: Promise<{ view?: string; date?: string; professional?: string }>
+  searchParams: Promise<{
+    view?: string
+    date?: string
+    professional?: string
+    novo?: string
+    patient?: string
+  }>
 }
 
 export default async function AgendaPage({ searchParams }: AgendaPageProps) {
   const params = await searchParams
-  const { activeClinic } = await requireActiveSession()
+  const { activeClinic } = await getActiveSession()
   const timezone = activeClinic.clinicTimezone
 
   const view = params.view === 'week' ? 'week' : 'day'
@@ -67,21 +72,13 @@ export default async function AgendaPage({ searchParams }: AgendaPageProps) {
   ])
 
   return (
-    <main className="container wide">
-      <div className="row">
-        <h1>Agenda</h1>
-        <span className="muted">
-          {activeClinic.clinicName} · {timezone}
-        </span>
-      </div>
-
-      <p className="muted">
-        <Link href="/dashboard">Painel</Link> ·{' '}
-        <Link href="/agenda/professionals">Profissionais</Link> ·{' '}
-        <Link href="/agenda/services">Servicos</Link> · <Link href="/patients">Pacientes</Link>
-      </p>
-
+    <div className="content">
+      {/* Titulo, toolbar e grade vivem no AgendaView: navegar entre datas e
+          alternar Dia/Semana e interacao de cliente, e manter o cabecalho junto
+          evita um segundo lugar para consertar quando o layout mudar. */}
       <AgendaView
+        openNew={params.novo === '1'}
+        presetPatientId={params.patient}
         view={view}
         date={date}
         days={days}
@@ -93,6 +90,6 @@ export default async function AgendaPage({ searchParams }: AgendaPageProps) {
         patients={patients}
         availability={availability}
       />
-    </main>
+    </div>
   )
 }

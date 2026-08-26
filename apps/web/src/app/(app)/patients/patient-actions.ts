@@ -3,8 +3,8 @@
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { createPatientSchema, updatePatientSchema, type Patient } from '@clinicas/shared'
-import { apiFetch } from '../../lib/api'
-import { requireActiveSession } from '../session'
+import { apiFetch } from '../../../lib/api'
+import { requireActiveSession } from '../../session'
 
 export interface PatientFormState {
   error: string | null

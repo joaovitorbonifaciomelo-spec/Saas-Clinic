@@ -1,13 +1,13 @@
 import Link from 'next/link'
 import type { AvailabilityBlock, Professional } from '@clinicas/shared'
-import { apiFetch } from '../../../lib/api'
-import { requireActiveSession } from '../../session'
+import { apiFetch } from '../../../../lib/api'
+import { getActiveSession } from '../../../session'
 import { ProfessionalsManager } from './professionals-manager'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ProfessionalsPage() {
-  const { activeClinic } = await requireActiveSession()
+  const { activeClinic } = await getActiveSession()
   const clinicId = activeClinic.clinicId
 
   const professionals = await apiFetch<Professional[]>('/api/professionals', { clinicId })
