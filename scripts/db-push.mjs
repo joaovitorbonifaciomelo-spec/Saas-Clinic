@@ -27,6 +27,12 @@ loadDotenv({ path: join(ROOT, '.env.test') })
 
 /** Placeholders do .env.example: se sobraram, o arquivo nao foi preenchido. */
 const PLACEHOLDER_MARKERS = ['SEU-PROJETO', 'cole-a-', 'SEU_PROJECT_REF', 'SENHA@']
+/**
+ * Senha colada do painel mantendo os colchetes do exemplo
+ * (postgresql://postgres:[YOUR-PASSWORD]@...). Falha com 28P01, que parece
+ * senha errada e na verdade e colchete sobrando. Barrado aqui.
+ */
+const BRACKETED_PASSWORD = /^SUPABASE_DB_URL=postgresql:\/\/[^:]+:\[.*\]@/m
 
 function fail(message, ...details) {
   console.error(`\n  ABORTADO: ${message}`)
@@ -117,6 +123,12 @@ function validateTarget(target) {
   if (existsSync(envTestPath)) {
     const raw = readFileSync(envTestPath, 'utf8')
     const untouched = PLACEHOLDER_MARKERS.filter((marker) => raw.includes(marker))
+    if (BRACKETED_PASSWORD.test(raw)) {
+      fail(
+        'a senha em SUPABASE_DB_URL esta entre colchetes.',
+        'Os colchetes vem do exemplo do painel e nao fazem parte da senha. Remova-os.',
+      )
+    }
     if (untouched.length > 0) {
       fail(
         '.env.test ainda contem valores de exemplo nao preenchidos.',
