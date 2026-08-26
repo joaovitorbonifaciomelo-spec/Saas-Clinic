@@ -26,11 +26,13 @@ export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
 /**
  * Transicoes permitidas na v0.1.
  *
- * Fluxo principal: scheduled -> awaiting_confirmation -> confirmed -> completed | no_show
- * Desvios: cancelamento a partir dos tres primeiros; reagendamento a partir de
- * awaiting_confirmation e confirmed.
+ * Modelado sobre o fluxo REAL da recepcao, nao sobre uma cadeia idealizada:
+ *   - o paciente comparece mesmo sem ter confirmado antes, entao `scheduled`
+ *     alcanca `completed` e `no_show` diretamente;
+ *   - a confirmacao por telefone acontece na hora, sem passo intermediario;
+ *   - o pedido de reagendamento chega antes de qualquer confirmacao.
  *
- * `cancelled`, `completed` e `no_show` sao TERMINAIS: array vazio, nao ausencia
+ * `completed`, `no_show` e `cancelled` sao TERMINAIS: array vazio, nao ausencia
  * de chave — a diferenca importa para quem le o mapa. Reabrir um terminal sera
  * uma regra nova e explicita, nunca um efeito colateral.
  *
@@ -41,10 +43,17 @@ export const APPOINTMENT_STATUS_TRANSITIONS: Record<
   AppointmentStatus,
   readonly AppointmentStatus[]
 > = {
-  scheduled: ['awaiting_confirmation', 'cancelled'],
-  awaiting_confirmation: ['confirmed', 'reschedule_requested', 'cancelled'],
-  confirmed: ['completed', 'no_show', 'reschedule_requested', 'cancelled'],
-  reschedule_requested: ['scheduled', 'awaiting_confirmation'],
+  scheduled: [
+    'awaiting_confirmation',
+    'confirmed',
+    'reschedule_requested',
+    'completed',
+    'no_show',
+    'cancelled',
+  ],
+  awaiting_confirmation: ['confirmed', 'reschedule_requested', 'completed', 'no_show', 'cancelled'],
+  confirmed: ['reschedule_requested', 'completed', 'no_show', 'cancelled'],
+  reschedule_requested: ['scheduled', 'awaiting_confirmation', 'cancelled'],
   cancelled: [],
   completed: [],
   no_show: [],

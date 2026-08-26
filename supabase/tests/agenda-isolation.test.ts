@@ -321,12 +321,71 @@ describe('3. Escrita cruzada nas entidades da agenda e negada', () => {
 
 // ---------------------------------------------------------------------------
 describe('4. Transicoes de status sao aplicadas pelo banco', () => {
-  it('scheduled nao pula direto para completed', async () => {
+  it('scheduled pode ir direto para completed — o paciente comparece sem confirmar', async () => {
+    const { data: created } = await alice.db
+      .from('appointments')
+      .insert({
+        clinic_id: alice.clinicId,
+        patient_id: alice.patientId,
+        professional_id: agendaA.professionalId,
+        starts_at: new Date(Date.parse(agendaA.appointmentStartsAt) + 10800_000).toISOString(),
+        ends_at: new Date(Date.parse(agendaA.appointmentStartsAt) + 12600_000).toISOString(),
+      })
+      .select('id')
+      .single<{ id: string }>()
+
     const { error } = await alice.db
       .from('appointments')
       .update({ status: 'completed' })
-      .eq('id', agendaA.appointmentId)
+      .eq('id', created!.id)
+    expect(error).toBeNull()
+  })
+
+  it('confirmed nao volta para awaiting_confirmation', async () => {
+    const { data: created } = await alice.db
+      .from('appointments')
+      .insert({
+        clinic_id: alice.clinicId,
+        patient_id: alice.patientId,
+        professional_id: agendaA.professionalId,
+        starts_at: new Date(Date.parse(agendaA.appointmentStartsAt) + 14400_000).toISOString(),
+        ends_at: new Date(Date.parse(agendaA.appointmentStartsAt) + 16200_000).toISOString(),
+      })
+      .select('id')
+      .single<{ id: string }>()
+
+    await alice.db.from('appointments').update({ status: 'confirmed' }).eq('id', created!.id)
+
+    const { error } = await alice.db
+      .from('appointments')
+      .update({ status: 'awaiting_confirmation' })
+      .eq('id', created!.id)
     expect(error).not.toBeNull()
+  })
+
+  it('UPDATE que nao muda o status nao e tratado como transicao', async () => {
+    // Reagendar um cancelado envia `status` inalterado junto do patch. O trigger
+    // dispara, mas status igual nao e transicao — nao pode virar erro.
+    const { data: created } = await alice.db
+      .from('appointments')
+      .insert({
+        clinic_id: alice.clinicId,
+        patient_id: alice.patientId,
+        professional_id: agendaA.professionalId,
+        starts_at: new Date(Date.parse(agendaA.appointmentStartsAt) + 18000_000).toISOString(),
+        ends_at: new Date(Date.parse(agendaA.appointmentStartsAt) + 19800_000).toISOString(),
+      })
+      .select('id')
+      .single<{ id: string }>()
+
+    await alice.db.from('appointments').update({ status: 'cancelled' }).eq('id', created!.id)
+
+    // Estado terminal, mas o status enviado e o mesmo que ja esta la.
+    const { error } = await alice.db
+      .from('appointments')
+      .update({ status: 'cancelled', notes: 'remarcar depois' })
+      .eq('id', created!.id)
+    expect(error).toBeNull()
   })
 
   it('cancelled e terminal', async () => {
@@ -351,7 +410,32 @@ describe('4. Transicoes de status sao aplicadas pelo banco', () => {
     expect(error).not.toBeNull()
   })
 
-  it('o caminho valido scheduled -> awaiting_confirmation -> confirmed funciona', async () => {
+  it('reschedule_requested pode ser cancelado sem passar por nova data', async () => {
+    const { data: created } = await alice.db
+      .from('appointments')
+      .insert({
+        clinic_id: alice.clinicId,
+        patient_id: alice.patientId,
+        professional_id: agendaA.professionalId,
+        starts_at: new Date(Date.parse(agendaA.appointmentStartsAt) + 21600_000).toISOString(),
+        ends_at: new Date(Date.parse(agendaA.appointmentStartsAt) + 23400_000).toISOString(),
+      })
+      .select('id')
+      .single<{ id: string }>()
+
+    await alice.db
+      .from('appointments')
+      .update({ status: 'reschedule_requested' })
+      .eq('id', created!.id)
+
+    const { error } = await alice.db
+      .from('appointments')
+      .update({ status: 'cancelled' })
+      .eq('id', created!.id)
+    expect(error).toBeNull()
+  })
+
+  it('o caminho scheduled -> awaiting_confirmation -> confirmed funciona', async () => {
     const first = await alice.db
       .from('appointments')
       .update({ status: 'awaiting_confirmation' })

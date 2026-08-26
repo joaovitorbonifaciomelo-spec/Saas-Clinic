@@ -178,14 +178,19 @@ create trigger appointments_prevent_clinic_id_change
 -- -----------------------------------------------------------------------------
 -- Transicoes de status
 --
--- Fluxo principal:
---   scheduled -> awaiting_confirmation -> confirmed -> completed | no_show
--- Desvios:
---   scheduled | awaiting_confirmation | confirmed -> cancelled
---   awaiting_confirmation | confirmed             -> reschedule_requested
---   reschedule_requested                          -> scheduled | awaiting_confirmation
+-- Modelado sobre o fluxo REAL da recepcao, nao sobre uma cadeia idealizada:
+--   * o paciente comparece mesmo sem ter confirmado antes;
+--   * a confirmacao por telefone acontece na hora, sem passo intermediario;
+--   * o pedido de reagendamento chega antes de qualquer confirmacao.
 --
--- cancelled, completed e no_show sao TERMINAIS nesta v0.1.
+--   scheduled             -> awaiting_confirmation, confirmed, reschedule_requested,
+--                            completed, no_show, cancelled
+--   awaiting_confirmation -> confirmed, reschedule_requested, completed, no_show, cancelled
+--   confirmed             -> reschedule_requested, completed, no_show, cancelled
+--   reschedule_requested  -> scheduled, awaiting_confirmation, cancelled
+--
+-- completed, no_show e cancelled sao TERMINAIS nesta v0.1. Reabrir um terminal
+-- sera uma regra nova e explicita, nunca efeito colateral.
 --
 -- No banco e nao so na API: assim a regra vale para qualquer caminho de escrita,
 -- e um bug de aplicacao nao consegue produzir historico impossivel.
@@ -199,15 +204,24 @@ as $$
 declare
   v_allowed public.appointment_status[];
 begin
-  if new.status = old.status then
+  -- Status inalterado nao e transicao. O trigger dispara em qualquer UPDATE que
+  -- mencione a coluna, inclusive um `set status = status` vindo de um patch
+  -- generico — reagendar um agendamento ja cancelado, por exemplo, nao pode ser
+  -- recusado como "cancelled -> cancelled invalido".
+  if new.status is not distinct from old.status then
     return new;
   end if;
 
   v_allowed := case old.status
-    when 'scheduled'             then array['awaiting_confirmation', 'cancelled']
-    when 'awaiting_confirmation' then array['confirmed', 'reschedule_requested', 'cancelled']
-    when 'confirmed'             then array['completed', 'no_show', 'reschedule_requested', 'cancelled']
-    when 'reschedule_requested'  then array['scheduled', 'awaiting_confirmation']
+    when 'scheduled' then
+      array['awaiting_confirmation', 'confirmed', 'reschedule_requested',
+            'completed', 'no_show', 'cancelled']
+    when 'awaiting_confirmation' then
+      array['confirmed', 'reschedule_requested', 'completed', 'no_show', 'cancelled']
+    when 'confirmed' then
+      array['reschedule_requested', 'completed', 'no_show', 'cancelled']
+    when 'reschedule_requested' then
+      array['scheduled', 'awaiting_confirmation', 'cancelled']
     else array[]::text[]
   end::public.appointment_status[];
 
