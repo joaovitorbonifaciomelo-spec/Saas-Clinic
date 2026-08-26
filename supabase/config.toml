@@ -3,4 +3,6 @@
 project_id = "clinicas-saas"
 
 [db]
-major_version = 15
+# Precisa espelhar o postgres_engine do projeto remoto (Settings -> Database).
+# Divergencia aqui faz o CLI reclamar no link e no push.
+major_version = 17
