@@ -2,8 +2,15 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { getPublicEnv } from '../env'
 
-/** Rotas acessiveis sem sessao. */
-const PUBLIC_PATHS = ['/login', '/signup', '/auth']
+/**
+ * Rotas acessiveis sem sessao.
+ *
+ * `/` entrou aqui porque virou a pagina publica de apresentacao. E a UNICA
+ * mudanca de protecao: continua valendo prefixo, entao nada abaixo de /dashboard,
+ * /agenda ou /patients ficou aberto — `/` casa por igualdade exata (a checagem
+ * de prefixo procura `//`, que nenhuma rota tem).
+ */
+const PUBLIC_PATHS = ['/', '/login', '/signup', '/auth']
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))

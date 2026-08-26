@@ -1607,3 +1607,797 @@ tbody tr:hover {
     flex: 1;
   }
 }
+
+/* =============================================================================
+   TELAS PUBLICAS — landing, login, signup
+   =============================================================================
+   Mesmos tokens do produto interno: mesmo navy, mesmo azul de acao, mesmas
+   bordas finas, mesmo radius, mesma stack de fonte. O que muda e a escala: uma
+   pagina de apresentacao e lida de longe e uma vez, enquanto a agenda e operada
+   de perto o dia inteiro. Por isso aqui o tipo cresce e o espaco respira — sem
+   virar um segundo design system.
+
+   Zero webfont, zero biblioteca de animacao, zero carrossel. As unicas imagens
+   sao duas capturas WebP do proprio sistema (43KB + 30KB).
+   ============================================================================= */
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 640;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+.wordmark-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r);
+  background: var(--brand);
+  color: #fff;
+  flex: none;
+}
+.wordmark.md .wordmark-text {
+  font-size: 16px;
+}
+.wordmark.lg .wordmark-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-lg);
+}
+.wordmark.lg .wordmark-text {
+  font-size: 20px;
+}
+.wordmark.dark {
+  color: #fff;
+}
+.wordmark.light {
+  color: var(--ink);
+}
+
+/* --- estrutura comum --- */
+.lp {
+  background: var(--surface);
+  color: var(--ink);
+}
+.lp-wrap {
+  width: 100%;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.lp-h1 {
+  font-size: clamp(32px, 4.4vw, 50px);
+  line-height: 1.08;
+  font-weight: 690;
+  letter-spacing: -0.032em;
+  text-wrap: balance;
+  margin: 0;
+}
+.lp-h1 .accent {
+  color: var(--brand);
+}
+.lp-h2 {
+  font-size: clamp(23px, 2.6vw, 31px);
+  line-height: 1.18;
+  font-weight: 670;
+  letter-spacing: -0.026em;
+  text-wrap: balance;
+  margin: 0;
+}
+.lp-h2.dark {
+  color: #fff;
+}
+.lp-lead {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 52ch;
+  margin: 18px 0 0;
+}
+.lp-sub {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 58ch;
+  margin: 10px 0 0;
+}
+.lp-eyebrow {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 640;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand);
+  margin-bottom: 12px;
+}
+.lp-eyebrow.dark {
+  color: #7aa5f7;
+}
+.lp-chip {
+  display: inline-block;
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  margin-bottom: 22px;
+}
+.lp-btn-lg {
+  font-size: 14.5px;
+  padding: 11px 20px;
+  border-radius: var(--r);
+}
+
+/* --- topbar navy --- */
+.lp-nav {
+  background: var(--nav);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  border-bottom: 1px solid #16203a;
+}
+.lp-nav-inner {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  height: 66px;
+}
+.lp-nav-brand,
+.lp-nav-brand:hover {
+  text-decoration: none;
+}
+.lp-nav-links {
+  display: flex;
+  gap: 26px;
+  margin-left: 12px;
+}
+.lp-nav-links a {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--nav-text);
+}
+.lp-nav-links a:hover {
+  color: #fff;
+  text-decoration: none;
+}
+.lp-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+.lp-nav-login {
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--nav-text-strong);
+}
+.lp-nav-login:hover {
+  color: #fff;
+  text-decoration: none;
+}
+
+/* --- hero --- */
+.lp-hero {
+  background: var(--surface);
+  padding-bottom: 78px;
+  /* A captura sangra para fora do container a direita: a tela do produto
+     continua alem da borda em vez de terminar num retangulo centralizado. */
+  overflow: hidden;
+}
+.lp-hero-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 470px) minmax(0, 1fr);
+  gap: 44px;
+  align-items: center;
+  padding-top: 66px;
+}
+.lp-hero-copy {
+  min-width: 0;
+}
+.lp-mini {
+  list-style: none;
+  padding: 0;
+  margin: 30px 0 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 26px;
+  max-width: 560px;
+}
+.lp-mini li {
+  display: flex;
+  gap: 10px;
+}
+.lp-mini svg {
+  color: var(--brand);
+  flex: none;
+  margin-top: 2px;
+}
+.lp-mini strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.lp-mini span {
+  display: block;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.lp-hero-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+}
+.lp-trust {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 18px 0 0;
+  max-width: 52ch;
+}
+.lp-trust svg {
+  color: var(--muted);
+  flex: none;
+}
+
+/* --- moldura das capturas reais --- */
+.lp-hero-art {
+  position: relative;
+  min-width: 0;
+  margin-right: -72px;
+}
+.lp-frame {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: 0 18px 44px rgba(15, 27, 45, 0.16);
+  overflow: hidden;
+}
+.lp-frame-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 11px;
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--line);
+}
+.lp-frame-bar span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+.lp-frame img,
+.lp-phone img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.lp-phone {
+  position: absolute;
+  right: -26px;
+  bottom: -44px;
+  width: 152px;
+  margin: 0;
+  padding: 5px;
+  background: #0b1220;
+  border-radius: 20px;
+  box-shadow: 0 16px 36px rgba(15, 27, 45, 0.26);
+}
+.lp-phone img {
+  border-radius: 15px;
+}
+
+/* --- secoes --- */
+.lp-section {
+  padding: 82px 0;
+  border-top: 1px solid var(--line);
+}
+.lp-section.alt {
+  background: var(--ground);
+}
+.lp-head {
+  max-width: 640px;
+  margin-bottom: 40px;
+}
+
+/*
+ * Sao cinco modulos, nao seis. Numa grade de tres colunas isso deixa uma celula
+ * vazia gritando "falta alguma coisa aqui" — e nao falta: cinco e o produto
+ * inteiro. A grade de seis faixas resolve: tres cards de duas faixas em cima,
+ * dois de tres embaixo, sem buraco.
+ */
+.lp-cards {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 16px;
+}
+.lp-card {
+  grid-column: span 2;
+}
+.lp-card:nth-child(4),
+.lp-card:nth-child(5) {
+  grid-column: span 3;
+}
+.lp-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+.lp-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-line);
+  color: var(--brand);
+  margin-bottom: 14px;
+}
+.lp-card h3 {
+  font-size: 15.5px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  margin: 0 0 7px;
+}
+.lp-card p {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0;
+}
+
+.lp-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.lp-steps li {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 22px;
+}
+/* A numeracao e informacao, nao enfeite: os passos acontecem nesta ordem. */
+.lp-step-n {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--brand);
+  margin-bottom: 12px;
+}
+.lp-steps h3 {
+  font-size: 15.5px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  margin: 0 0 7px;
+}
+.lp-steps p {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* --- faixa de isolamento (navy) --- */
+.lp-sec {
+  background: var(--nav);
+  padding: 82px 0;
+}
+.lp-sec-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1fr);
+  gap: 56px;
+  align-items: start;
+}
+.lp-sec-lead {
+  font-size: 15px;
+  line-height: 1.65;
+  color: #9fb0c9;
+  margin: 16px 0 0;
+  max-width: 50ch;
+}
+.lp-sec-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.lp-sec-list li {
+  display: flex;
+  gap: 13px;
+  background: #111b2e;
+  border: 1px solid #1e2b45;
+  border-radius: var(--r-lg);
+  padding: 17px 19px;
+}
+.lp-sec-list svg {
+  color: #7aa5f7;
+  flex: none;
+  margin-top: 2px;
+}
+.lp-sec-list strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 620;
+  color: #fff;
+  margin-bottom: 4px;
+}
+.lp-sec-list span {
+  display: block;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #93a5c0;
+}
+
+/* --- cta final --- */
+.lp-cta {
+  padding: 72px 0;
+  background: var(--ground);
+  border-top: 1px solid var(--line);
+}
+.lp-cta-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+}
+.lp-cta-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* --- rodape --- */
+.lp-foot {
+  background: var(--nav);
+  padding: 30px 0;
+}
+.lp-foot-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 28px;
+}
+.lp-foot p {
+  font-size: 12.5px;
+  color: var(--nav-text);
+  margin: 0;
+}
+.lp-foot nav {
+  display: flex;
+  gap: 20px;
+  margin-left: auto;
+}
+.lp-foot nav a {
+  font-size: 13px;
+  color: var(--nav-text-strong);
+}
+.lp-foot nav a:hover {
+  color: #fff;
+  text-decoration: none;
+}
+
+/* =============================================================================
+   LOGIN / SIGNUP — split screen
+   ============================================================================= */
+.auth-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--surface);
+}
+
+.auth-panel {
+  position: relative;
+  overflow: hidden;
+  background: var(--nav);
+  color: #fff;
+  display: flex;
+}
+/*
+ * Logo fixa no topo, discurso centrado no que sobra.
+ *
+ * Com `space-between` a marca colava no topo, o texto no rodape e o meio virava
+ * um bloco navy de 500px sem nada — parecia pagina que nao terminou de carregar.
+ */
+.auth-panel-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  padding: 48px 52px;
+  width: 100%;
+  max-width: 560px;
+  margin-left: auto;
+}
+.auth-panel-body {
+  align-self: center;
+  padding-bottom: 24px;
+}
+.auth-panel-brand,
+.auth-panel-brand:hover {
+  text-decoration: none;
+  align-self: flex-start;
+}
+.auth-panel-h {
+  font-size: clamp(26px, 2.6vw, 34px);
+  line-height: 1.16;
+  font-weight: 680;
+  letter-spacing: -0.028em;
+  text-wrap: balance;
+  margin: 0;
+}
+.auth-panel-h .accent {
+  color: #4d8bff;
+}
+.auth-panel-lead {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: #9fb0c9;
+  margin: 14px 0 0;
+  max-width: 44ch;
+}
+.auth-benefits {
+  list-style: none;
+  padding: 0;
+  margin: 34px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.auth-benefits li {
+  display: flex;
+  gap: 14px;
+}
+.auth-benefit-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--r);
+  background: #17233a;
+  border: 1px solid #22304c;
+  color: #7aa5f7;
+}
+.auth-benefits strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 620;
+  color: #fff;
+}
+.auth-benefits span {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #8fa2bd;
+}
+/*
+ * Composicao grafica no lugar de foto de banco de imagem: um brilho azul suave
+ * e a mesma cruz da marca como marca d'agua. Zero byte de download.
+ *
+ * A cruz precisa aparecer quase inteira. Cortada demais pela borda ela perde a
+ * forma e vira dois retangulos cinzas soltos no canto — parece bug, nao enfeite.
+ */
+.auth-panel::after {
+  content: '';
+  position: absolute;
+  right: -180px;
+  bottom: -220px;
+  width: 620px;
+  height: 620px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(37, 99, 235, 0.34), rgba(37, 99, 235, 0) 68%);
+  pointer-events: none;
+}
+.auth-panel-mark {
+  position: absolute;
+  right: -56px;
+  bottom: -70px;
+  color: #ffffff;
+  opacity: 0.035;
+  line-height: 0;
+  pointer-events: none;
+}
+
+.auth-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  padding: 48px 28px;
+  background: var(--surface-sunk);
+}
+.auth-mobile-brand {
+  display: none;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 424px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  padding: 34px 32px;
+}
+.auth-card-head {
+  text-align: center;
+  margin-bottom: 26px;
+}
+.auth-card-head h1 {
+  font-size: 24px;
+  font-weight: 670;
+  letter-spacing: -0.025em;
+  margin: 0 0 7px;
+}
+.auth-card-head p {
+  font-size: 13.5px;
+  color: var(--muted);
+  margin: 0;
+}
+.auth-form label {
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.auth-form input {
+  padding: 10px 12px;
+  font-size: 14px;
+  border-radius: var(--r);
+}
+.auth-form button.lg {
+  font-size: 14.5px;
+  padding: 11px 18px;
+  margin-top: 4px;
+}
+.auth-note {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r);
+  padding: 10px 12px;
+  margin: 4px 0 16px;
+}
+.auth-alt {
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 22px 0 0;
+}
+
+/* =============================================================================
+   RESPONSIVO DAS TELAS PUBLICAS
+   ============================================================================= */
+@media (max-width: 1080px) {
+  .lp-hero-inner {
+    grid-template-columns: 1fr;
+    gap: 44px;
+    padding-top: 48px;
+  }
+  .lp-hero-copy {
+    padding-top: 24px;
+  }
+  /* Sem duas colunas nao ha o que sangrar: a captura volta para dentro do
+     container, senao o lado direito da tela do produto some cortado. */
+  .lp-hero-art {
+    max-width: 660px;
+    margin-right: 0;
+  }
+  .lp-sec-inner {
+    grid-template-columns: 1fr;
+    gap: 34px;
+  }
+  .lp-cards,
+  .lp-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* A grade de seis faixas so existe no layout de tres colunas. */
+  .lp-card,
+  .lp-card:nth-child(4),
+  .lp-card:nth-child(5) {
+    grid-column: auto;
+  }
+  .auth-panel-inner {
+    padding: 40px;
+  }
+}
+
+@media (max-width: 900px) {
+  .lp-nav-links {
+    display: none;
+  }
+  /* O painel promocional sai antes de espremer o formulario: quem esta em
+     /login quer o campo de senha, nao a lista de beneficios. */
+  .auth-split {
+    grid-template-columns: 1fr;
+  }
+  .auth-panel {
+    display: none;
+  }
+  .auth-mobile-brand {
+    display: block;
+  }
+  .auth-main {
+    min-height: 100vh;
+    justify-content: flex-start;
+    padding-top: 56px;
+  }
+}
+
+@media (max-width: 720px) {
+  .lp-wrap {
+    padding: 0 18px;
+  }
+  .lp-section,
+  .lp-sec {
+    padding: 56px 0;
+  }
+  .lp-cta {
+    padding: 52px 0;
+  }
+  .lp-cards,
+  .lp-steps {
+    grid-template-columns: 1fr;
+  }
+  .lp-mini {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .lp-hero {
+    padding-bottom: 56px;
+  }
+  .lp-phone {
+    display: none;
+  }
+  .lp-nav-inner {
+    gap: 14px;
+  }
+  .lp-foot-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .lp-foot nav {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .lp-hero-cta .btn,
+  .lp-cta-actions .btn {
+    flex: 1;
+  }
+  .auth-card {
+    padding: 26px 20px;
+  }
+  .auth-main {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
