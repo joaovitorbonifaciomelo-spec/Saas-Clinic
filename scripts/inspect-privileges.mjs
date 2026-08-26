@@ -240,10 +240,31 @@ if (writePolicies.length > 0) {
 
 // As 9 policies da migration 0003. Perder uma abriria acesso; ganhar uma que nao
 // esteja no arquivo significa que alguem mexeu no banco fora das migrations.
-const EXPECTED_POLICY_COUNT = 23
-console.log(`\n    total de policies: ${policies.rows.length} (esperado ${EXPECTED_POLICY_COUNT})`)
-if (policies.rows.length !== EXPECTED_POLICY_COUNT) {
-  fail(`esperadas ${EXPECTED_POLICY_COUNT} policies, encontradas ${policies.rows.length}`)
+/**
+ * Policies esperadas POR TABELA, nao um total unico.
+ *
+ * Um total agregado esconderia dois erros que se cancelam — uma policy a menos
+ * em `appointments` e uma a mais em `patients` somariam igual e passariam.
+ */
+const EXPECTED_POLICIES_BY_TABLE = {
+  profiles: 2,
+  clinics: 2,
+  clinic_members: 1,
+  patients: 4,
+  professionals: 3,
+  services: 3,
+  professional_availability: 4,
+  appointments: 3,
+}
+
+console.log('')
+for (const table of TABLES) {
+  const actual = policies.rows.filter((row) => row.tablename === table).length
+  const expected = EXPECTED_POLICIES_BY_TABLE[table]
+  console.log(`    ${table.padEnd(26)} ${actual} policy(ies) (esperado ${expected})`)
+  if (actual !== expected) {
+    fail(`${table}: esperadas ${expected} policies, encontradas ${actual}`)
+  }
 }
 
 // --- Trigger em auth.users ---------------------------------------------------

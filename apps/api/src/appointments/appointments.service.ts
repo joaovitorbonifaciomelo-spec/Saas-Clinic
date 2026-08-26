@@ -272,12 +272,64 @@ export class AppointmentsService {
   // Escrita
   // -------------------------------------------------------------------------
 
+  /**
+   * Recusa profissional ou servico inativo em agendamento NOVO ou reapontado.
+   *
+   * Desativar e o nosso "excluir" — nao ha DELETE nessas tabelas justamente para
+   * o historico sobreviver. Mas desativado tem que sair do fluxo de marcacao, ou
+   * a desativacao nao significa nada.
+   *
+   * Validado so quando o campo esta sendo ESCRITO. Editar a observacao de uma
+   * consulta antiga cujo servico foi desativado depois continua funcionando —
+   * referencias historicas sao preservadas, nao revalidadas.
+   *
+   * O filtro na tela nao basta: ele desaparece numa chamada direta a API.
+   */
+  private async assertSelectable(
+    clinicId: string,
+    professionalId: string | undefined,
+    serviceId: string | null | undefined,
+  ): Promise<void> {
+    if (professionalId) {
+      const { data, error } = await this.supabase
+        .from('professionals')
+        .select('active')
+        .eq('clinic_id', clinicId)
+        .eq('id', professionalId)
+        .maybeSingle()
+
+      if (error) throw mapPostgrestError(error)
+      // Inexistente e de outro tenant caem aqui iguais: 404, sem revelar qual.
+      if (!data) throw new NotFoundException('Profissional nao encontrado.')
+      if (!(data as { active: boolean }).active) {
+        throw new ConflictException('Profissional inativo nao pode receber novos agendamentos.')
+      }
+    }
+
+    if (serviceId) {
+      const { data, error } = await this.supabase
+        .from('services')
+        .select('active')
+        .eq('clinic_id', clinicId)
+        .eq('id', serviceId)
+        .maybeSingle()
+
+      if (error) throw mapPostgrestError(error)
+      if (!data) throw new NotFoundException('Servico nao encontrado.')
+      if (!(data as { active: boolean }).active) {
+        throw new ConflictException('Servico inativo nao pode ser usado em novos agendamentos.')
+      }
+    }
+  }
+
   async create(
     clinicId: string,
     userId: string,
     timezone: string,
     input: CreateAppointmentInput,
   ): Promise<Appointment> {
+    await this.assertSelectable(clinicId, input.professionalId, input.serviceId)
+
     await this.guardWarnings(
       clinicId,
       input.professionalId,
@@ -314,6 +366,10 @@ export class AppointmentsService {
     input: UpdateAppointmentInput,
   ): Promise<Appointment> {
     const current = await this.findById(clinicId, id)
+
+    // Só valida o que está sendo trocado: manter a referência histórica intacta
+    // é o ponto de não ter DELETE nessas tabelas.
+    await this.assertSelectable(clinicId, input.professionalId, input.serviceId)
 
     const professionalId = input.professionalId ?? current.professionalId
     const startsAt = input.startsAt ?? current.startsAt

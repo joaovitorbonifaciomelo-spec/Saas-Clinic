@@ -49,7 +49,22 @@ const EXPECTED_AUTHENTICATED: Record<string, string[]> = {
   appointments: ['INSERT', 'SELECT', 'UPDATE'],
 }
 
-const EXPECTED_POLICY_COUNT = 23
+/**
+ * Policies esperadas POR TABELA, nao um total unico.
+ *
+ * Um total agregado esconderia dois erros que se cancelam — uma policy a menos
+ * em `appointments` e uma a mais em `patients` somariam igual e passariam.
+ */
+const EXPECTED_POLICIES_BY_TABLE: Record<string, number> = {
+  profiles: 2,
+  clinics: 2,
+  clinic_members: 1,
+  patients: 4,
+  professionals: 3,
+  services: 3,
+  professional_availability: 4,
+  appointments: 3,
+}
 
 let client: pg.Client
 
@@ -141,13 +156,12 @@ describe('RLS e policies', () => {
     expect(rows[0]!.enabled).toBe(true)
   })
 
-  it('as 9 policies continuam intactas', async () => {
-    const { rows } = await client.query<{ tablename: string; cmd: string }>(
-      `select tablename, cmd from pg_policies
-        where schemaname = 'public' and tablename = any($1)`,
-      [[...TABLES]],
+  it.each(TABLES)('%s tem exatamente as policies esperadas', async (table) => {
+    const { rows } = await client.query(
+      `select policyname from pg_policies where schemaname = 'public' and tablename = $1`,
+      [table],
     )
-    expect(rows).toHaveLength(EXPECTED_POLICY_COUNT)
+    expect(rows).toHaveLength(EXPECTED_POLICIES_BY_TABLE[table]!)
   })
 
   it('clinic_members nao tem policy de escrita', async () => {
