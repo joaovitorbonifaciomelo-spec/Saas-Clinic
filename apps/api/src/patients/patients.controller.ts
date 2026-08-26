@@ -10,7 +10,7 @@ import { AuthGuard } from '../auth/auth.guard'
 import { ActiveClinicId } from '../clinics/active-clinic.decorator'
 import { ClinicMembershipGuard } from '../clinics/clinic-membership.guard'
 import { ZodValidationPipe } from '../common/zod-validation.pipe'
-import { type PatientsService } from './patients.service'
+import { PatientsService } from './patients.service'
 
 /**
  * Ordem dos guards importa: AuthGuard resolve QUEM e o usuario,

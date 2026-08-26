@@ -3,7 +3,7 @@ import { createClinicSchema, type Clinic, type ClinicMembership } from '@clinica
 import type { CreateClinicInput } from '@clinicas/shared'
 import { AuthGuard } from '../auth/auth.guard'
 import { ZodValidationPipe } from '../common/zod-validation.pipe'
-import { type ClinicsService } from './clinics.service'
+import { ClinicsService } from './clinics.service'
 
 @Controller('clinics')
 @UseGuards(AuthGuard)

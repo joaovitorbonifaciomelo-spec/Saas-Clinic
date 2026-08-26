@@ -2,7 +2,7 @@ import { Controller, Get, Inject, NotFoundException, UseGuards } from '@nestjs/c
 import type { MeResponse } from '@clinicas/shared'
 import { AuthGuard, type AuthenticatedUser } from '../auth/auth.guard'
 import { CurrentUser } from '../auth/current-user.decorator'
-import { type ClinicsService } from '../clinics/clinics.service'
+import { ClinicsService } from '../clinics/clinics.service'
 import { SUPABASE_USER_CLIENT, type UserScopedClient } from '../supabase/supabase.types'
 import { mapPostgrestError } from '../common/postgrest-error'
 
