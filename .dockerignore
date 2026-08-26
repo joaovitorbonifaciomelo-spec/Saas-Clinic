@@ -1,0 +1,42 @@
+# Artefatos e dependencias: reconstruidos dentro da imagem.
+node_modules
+**/node_modules
+dist
+**/dist
+.next
+**/.next
+coverage
+*.log
+*.tsbuildinfo
+.git
+.github
+
+# -----------------------------------------------------------------------------
+# SEGREDOS — nunca entram no contexto de build.
+#
+# Os padroes precisam de `**/` para alcancar tambem apps/api/.env e
+# apps/web/.env.local. Um `.env.*` sem prefixo so casaria na raiz, e um
+# `docker build .` local assaria a service_role numa layer da imagem.
+# -----------------------------------------------------------------------------
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.test.example
+
+# Manifestos de execucao dos testes de isolamento (ids de recursos efemeros).
+supabase/tests/.runs
+
+# -----------------------------------------------------------------------------
+# O frontend NAO e buildado nesta imagem — mas o package.json dele precisa
+# entrar no contexto: o pnpm-lock descreve o workspace inteiro e o
+# --frozen-lockfile recusa a instalacao se um membro estiver faltando.
+#
+# Excluir `apps/web` inteiro quebraria o build; excluir `apps/web/**` e
+# reincluir um arquivo funciona porque o diretorio em si nao foi excluido.
+# -----------------------------------------------------------------------------
+apps/web/**
+!apps/web/package.json
+
+# Nao precisam ir para a imagem da API.
+docs
+supabase/migrations

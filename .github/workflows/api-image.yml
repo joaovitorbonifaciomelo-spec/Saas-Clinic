@@ -1,0 +1,158 @@
+name: API image
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'apps/api/**'
+      - 'apps/web/package.json'
+      - 'packages/shared/**'
+      - 'packages/config/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'tsconfig.base.json'
+      - 'docker/api.Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/api-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # O SHA e a versao de deploy. `latest` existe so por conveniencia no
+      # GHCR e nunca e a fonte da verdade para a VPS.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-api
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest
+
+      # Build local primeiro: o smoke test roda ANTES de qualquer push para o
+      # registro, entao uma imagem quebrada nunca chega a ficar disponivel.
+      - name: Build (sem push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/api.Dockerfile
+          push: false
+          load: true
+          tags: clinic-saas-api:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---------------------------------------------------------------------
+      # SMOKE TEST
+      # ---------------------------------------------------------------------
+      - name: Smoke — processo nao roda como root
+        run: |
+          UID_RUN=$(docker run --rm --entrypoint id clinic-saas-api:smoke -u)
+          USER_RUN=$(docker run --rm --entrypoint id clinic-saas-api:smoke -un)
+          echo "uid=$UID_RUN user=$USER_RUN"
+          if [ "$UID_RUN" = "0" ]; then
+            echo "FALHA: container roda como root"
+            exit 1
+          fi
+
+      - name: Smoke — nenhum .env dentro da imagem
+        run: |
+          FOUND=$(docker run --rm --entrypoint find clinic-saas-api:smoke \
+            / -xdev \( -name '.env' -o -name '.env.*' \) -not -name '*.example' 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "FALHA: arquivos de ambiente na imagem:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "OK: nenhum .env na imagem"
+
+      - name: Smoke — nenhum segredo no conteudo da imagem
+        run: |
+          # Procura marcadores de service_role, connection string e JWT do
+          # Supabase em tudo que a aplicacao carrega.
+          HITS=$(docker run --rm --entrypoint grep clinic-saas-api:smoke \
+            -rIl -E 'SUPABASE_SERVICE_ROLE_KEY=|SUPABASE_DB_URL=|postgresql://postgres:|sb_secret_' \
+            /app/apps /app/packages 2>/dev/null || true)
+          if [ -n "$HITS" ]; then
+            echo "FALHA: possivel segredo embutido:"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK: nenhum marcador de segredo"
+
+      - name: Smoke — devDependencies fora do runtime
+        run: |
+          # next/react sao do frontend; typescript e nest-cli sao de build.
+          for p in next react typescript @nestjs/cli; do
+            if docker run --rm --entrypoint sh clinic-saas-api:smoke \
+                 -c "[ -e /app/node_modules/$p ]" 2>/dev/null; then
+              echo "FALHA: $p presente no runtime"
+              exit 1
+            fi
+          done
+          echo "OK: runtime sem devDependencies nem pacotes do frontend"
+
+      - name: Smoke — container sobe e /api/health responde
+        run: |
+          # Valores fictcios: /api/health nao consulta o Supabase. Servem apenas
+          # para o loadEnv passar na validacao zod no bootstrap.
+          docker run -d --name smoke -p 127.0.0.1:3333:3333 \
+            -e NODE_ENV=production \
+            -e API_PORT=3333 \
+            -e SUPABASE_URL=https://example.supabase.co \
+            -e SUPABASE_ANON_KEY=chave-ficticia-apenas-para-o-smoke-test \
+            -e WEB_ORIGIN=https://example.invalid \
+            clinic-saas-api:smoke
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3333/api/health > /tmp/health.json 2>/dev/null; then
+              echo "health: $(cat /tmp/health.json)"
+              grep -q '"status":"ok"' /tmp/health.json && break
+            fi
+            sleep 2
+            if [ "$i" = "30" ]; then
+              echo "FALHA: /api/health nao respondeu"
+              docker logs smoke
+              exit 1
+            fi
+          done
+
+          echo "--- tamanho da imagem ---"
+          docker image inspect clinic-saas-api:smoke --format '{{.Size}}' \
+            | awk '{printf "  %.1f MB\n", $1/1024/1024}'
+          docker rm -f smoke
+
+      # ---------------------------------------------------------------------
+      # Push somente apos o smoke test passar
+      # ---------------------------------------------------------------------
+      - name: Push para o GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/api.Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+
+      - name: Tag de deploy
+        run: |
+          echo "## Imagem publicada" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "IMAGE_TAG=sha-${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Use esta tag no /opt/clinic-saas/.env da VPS." >> $GITHUB_STEP_SUMMARY

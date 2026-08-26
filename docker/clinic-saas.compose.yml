@@ -1,0 +1,51 @@
+# =============================================================================
+# API do SaaS de clinicas — infraestrutura TEMPORARIA de development/piloto.
+#
+# Vai para /opt/clinic-saas/docker-compose.yml na VPS.
+#
+# Projeto e rede proprios: nenhum acoplamento com o projeto `evolution`, que
+# roda a automacao de WhatsApp de uma cliente real na mesma maquina.
+# =============================================================================
+name: clinic-saas
+
+services:
+  api:
+    # A tag e SEMPRE um SHA imutavel, vindo de IMAGE_TAG no .env.
+    # `latest` existe no GHCR por conveniencia mas nao e a fonte da verdade:
+    # um deploy nunca deve depender de um ponteiro que se move sozinho.
+    image: ghcr.io/joaovitorbonifaciomelo-spec/saas-clinic-api:${IMAGE_TAG:?defina IMAGE_TAG=sha-<commit> no .env}
+    container_name: clinic-saas-api
+    restart: unless-stopped
+    env_file: /opt/clinic-saas/.env
+
+    # Loopback apenas. A porta nunca fica exposta a internet — quem publica
+    # e o Tailscale Funnel, por tunel reverso.
+    ports:
+      - '127.0.0.1:3333:3333'
+
+    # Teto que impede a API de sufocar a automacao numa VPS de 1 vCPU.
+    mem_limit: 512m
+    cpus: 0.5
+
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3333/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    networks: [clinic-saas]
+
+networks:
+  clinic-saas:
+    name: clinic-saas
