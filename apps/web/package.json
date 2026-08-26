@@ -2,9 +2,12 @@
   "name": "@clinicas/web",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "description": "Frontend Next.js: autenticacao, onboarding, dashboard e pacientes.",
   "scripts": {
-    "build": "next build",
+    "build": "pnpm --filter @clinicas/shared build && next build",
     "dev": "next dev --port 3000",
     "start": "next start --port 3000",
     "typecheck": "tsc -p tsconfig.json --noEmit"
