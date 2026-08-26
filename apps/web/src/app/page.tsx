@@ -18,7 +18,12 @@ export const metadata: Metadata = {
     'Sistema para a recepção da clínica: veja o dia, marque e remarque consultas, ' +
     'acompanhe o status de cada agendamento e mantenha pacientes, profissionais e ' +
     'serviços no mesmo lugar.',
-  alternates: { canonical: '/' },
+  /*
+   * Sem `canonical` por enquanto. Sem `metadataBase`, o Next emite a URL
+   * relativa ("/"), e a alternativa seria fixar o dominio temporario da Vercel
+   * no codigo — apontar canonical para um endereco que vai mudar e pior do que
+   * nao ter canonical nenhum. Volta junto com o dominio proprio.
+   */
 }
 
 /*
