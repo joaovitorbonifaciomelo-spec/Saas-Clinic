@@ -40,11 +40,17 @@ RUN pnpm --filter @clinicas/api build
 
 # -----------------------------------------------------------------------------
 # prod-deps — arvore separada, so producao.
-# O filtro `@clinicas/api...` traz a api e suas dependencias de workspace,
-# deixando de fora next, react e todo o resto do frontend.
+#
+# Os dois projetos sao listados EXPLICITAMENTE, sem o sufixo `...`.
+# `@clinicas/api...` pareceria mais elegante, mas a travessia tambem arrasta
+# `@clinicas/config` — que e devDependency da api e, ainda assim, declara
+# @eslint/js e typescript-eslint como dependencias de PRODUCAO dele. O
+# resultado seria a toolchain de lint inteira dentro da imagem de runtime.
 # -----------------------------------------------------------------------------
 FROM manifests AS prod-deps
-RUN pnpm install --prod --frozen-lockfile --filter @clinicas/api...
+RUN pnpm install --prod --frozen-lockfile \
+      --filter @clinicas/api \
+      --filter @clinicas/shared
 
 # -----------------------------------------------------------------------------
 # runtime — dependencias de producao + artefatos compilados.

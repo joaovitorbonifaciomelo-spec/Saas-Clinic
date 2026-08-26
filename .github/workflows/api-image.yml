@@ -97,8 +97,10 @@ jobs:
 
       - name: Smoke — devDependencies fora do runtime
         run: |
-          # next/react sao do frontend; typescript e nest-cli sao de build.
-          for p in next react typescript @nestjs/cli; do
+          # next/react sao do frontend; typescript e nest-cli sao de build;
+          # typescript-eslint e @eslint/js entrariam via @clinicas/config, que
+          # declara ferramentas de lint como dependencia de producao.
+          for p in next react typescript @nestjs/cli typescript-eslint @eslint/js eslint; do
             if docker run --rm --entrypoint sh clinic-saas-api:smoke \
                  -c "[ -e /app/node_modules/$p ]" 2>/dev/null; then
               echo "FALHA: $p presente no runtime"
