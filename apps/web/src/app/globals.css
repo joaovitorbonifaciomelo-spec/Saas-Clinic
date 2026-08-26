@@ -116,3 +116,198 @@ th {
   align-items: center;
   justify-content: space-between;
 }
+
+/* ===================== Agenda ===================== */
+
+.container.wide {
+  max-width: 1180px;
+}
+
+select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+label.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+label.inline input {
+  width: auto;
+  margin-top: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+.toolbar-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.toolbar-group input,
+.toolbar-group select {
+  margin-top: 0;
+  width: auto;
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.field-row label {
+  flex: 1;
+  min-width: 120px;
+}
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.day-column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.day-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.availability-hint {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.appointment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.appointment {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  /* Faixa lateral: o status tambem e legivel sem depender de cor. */
+  border-left: 4px solid var(--muted);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.appointment-time {
+  font-weight: 600;
+}
+.appointment-name {
+  font-size: 14px;
+}
+.appointment-meta,
+.appointment-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-scheduled {
+  border-left-color: #6b7280;
+}
+.status-awaiting_confirmation {
+  border-left-color: #b45309;
+}
+.status-confirmed {
+  border-left-color: #15803d;
+}
+.status-reschedule_requested {
+  border-left-color: #7c3aed;
+}
+.status-cancelled {
+  border-left-color: #b42318;
+  opacity: 0.6;
+}
+.status-completed {
+  border-left-color: #0f766e;
+}
+.status-no_show {
+  border-left-color: #9f1239;
+}
+
+/* Encaixe: borda tracejada, alem do rotulo "encaixe" no texto. */
+.appointment.has-overlap {
+  border-style: dashed;
+  border-width: 1px 1px 1px 4px;
+}
+
+button.block {
+  width: 100%;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 32, 0.45);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 50;
+}
+
+.drawer {
+  background: var(--surface);
+  width: min(460px, 100%);
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.warnings {
+  border: 1px solid #b45309;
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fff8ed;
+  font-size: 14px;
+}
+.warnings ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.status-panel {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

@@ -6,12 +6,13 @@ import { mapPostgrestError } from '../common/postgrest-error'
 interface MembershipRow {
   clinic_id: string
   role: ClinicRole
-  clinics: { id: string; name: string } | null
+  clinics: { id: string; name: string; timezone: string } | null
 }
 
 interface ClinicRow {
   id: string
   name: string
+  timezone: string
   created_at: string
 }
 
@@ -27,7 +28,7 @@ export class ClinicsService {
   async listMemberships(): Promise<ClinicMembership[]> {
     const { data, error } = await this.supabase
       .from('clinic_members')
-      .select('clinic_id, role, clinics ( id, name )')
+      .select('clinic_id, role, clinics ( id, name, timezone )')
       .order('created_at', { ascending: true })
 
     if (error) throw mapPostgrestError(error)
@@ -37,6 +38,7 @@ export class ClinicsService {
       .map((row) => ({
         clinicId: row.clinic_id,
         clinicName: row.clinics!.name,
+        clinicTimezone: row.clinics!.timezone,
         role: row.role,
       }))
   }
@@ -54,6 +56,6 @@ export class ClinicsService {
     if (error) throw mapPostgrestError(error)
 
     const row = data as unknown as ClinicRow
-    return { id: row.id, name: row.name, createdAt: row.created_at }
+    return { id: row.id, name: row.name, timezone: row.timezone, createdAt: row.created_at }
   }
 }

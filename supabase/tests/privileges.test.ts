@@ -20,20 +20,36 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import pg from 'pg'
 import { loadIsolationEnv, parseDbConnection } from './helpers'
 
-const TABLES = ['profiles', 'clinics', 'clinic_members', 'patients'] as const
+const TABLES = [
+  'profiles',
+  'clinics',
+  'clinic_members',
+  'patients',
+  'professionals',
+  'services',
+  'professional_availability',
+  'appointments',
+] as const
 
 /** Privilegios que `authenticated` nunca pode ter. Ver cabecalho. */
 const FORBIDDEN_FOR_AUTHENTICATED = ['TRUNCATE', 'TRIGGER', 'REFERENCES'] as const
 
-/** Matriz autoritativa: espelha as migrations 0003 (policies) e 0007 (grants). */
+/** Matriz autoritativa: espelha as migrations 0003/0010 (policies) e 0007/0011 (grants). */
 const EXPECTED_AUTHENTICATED: Record<string, string[]> = {
   profiles: ['SELECT', 'UPDATE'],
   clinics: ['SELECT', 'UPDATE'],
   clinic_members: ['SELECT'],
   patients: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
+  // Sem DELETE: desativa via `active` — apagar quebraria historico de agenda.
+  professionals: ['INSERT', 'SELECT', 'UPDATE'],
+  services: ['INSERT', 'SELECT', 'UPDATE'],
+  // Configuracao operacional: pode ser removida.
+  professional_availability: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
+  // Sem DELETE: cancela via status, para o historico continuar auditavel.
+  appointments: ['INSERT', 'SELECT', 'UPDATE'],
 }
 
-const EXPECTED_POLICY_COUNT = 9
+const EXPECTED_POLICY_COUNT = 23
 
 let client: pg.Client
 

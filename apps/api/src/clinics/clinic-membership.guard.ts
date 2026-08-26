@@ -11,6 +11,7 @@ import { SUPABASE_USER_CLIENT, type UserScopedClient } from '../supabase/supabas
 
 export interface RequestWithClinic extends RequestWithUser {
   clinicId?: string
+  clinicTimezone?: string
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -46,7 +47,7 @@ export class ClinicMembershipGuard implements CanActivate {
 
     const { data, error } = await this.supabase
       .from('clinic_members')
-      .select('clinic_id')
+      .select('clinic_id, clinics ( timezone )')
       .eq('clinic_id', clinicId)
       .maybeSingle()
 
@@ -57,6 +58,10 @@ export class ClinicMembershipGuard implements CanActivate {
     }
 
     request.clinicId = clinicId
+    // O fuso vem junto do membership para a agenda nao pagar outra consulta.
+    request.clinicTimezone =
+      (data as unknown as { clinics: { timezone: string } | null }).clinics?.timezone ??
+      'America/Sao_Paulo'
     return true
   }
 }

@@ -18,6 +18,8 @@ export type CreateClinicInput = z.infer<typeof createClinicSchema>
 export interface Clinic {
   id: string
   name: string
+  /** Fuso IANA da clinica. Define o recorte de dia e semana da agenda. */
+  timezone: string
   createdAt: string
 }
 
@@ -25,5 +27,6 @@ export interface Clinic {
 export interface ClinicMembership {
   clinicId: string
   clinicName: string
+  clinicTimezone: string
   role: z.infer<typeof clinicRoleSchema>
 }

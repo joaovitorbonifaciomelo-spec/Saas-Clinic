@@ -14,6 +14,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Corpo bruto da resposta. O 409 da agenda carrega avisos e fingerprint. */
+    readonly payload?: unknown,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -29,7 +31,7 @@ async function getAccessToken(): Promise<string | null> {
 }
 
 interface ApiRequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   body?: unknown
   clinicId?: string
 }
@@ -57,7 +59,7 @@ export async function apiFetch<T>(path: string, options: ApiRequestOptions = {})
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { message?: string } | null
-    throw new ApiError(response.status, payload?.message ?? 'Falha na requisicao.')
+    throw new ApiError(response.status, payload?.message ?? 'Falha na requisicao.', payload)
   }
 
   if (response.status === 204) return undefined as T

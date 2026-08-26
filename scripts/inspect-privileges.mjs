@@ -15,7 +15,16 @@ import pg from 'pg'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 loadDotenv({ path: join(ROOT, '.env.test') })
 
-const TABLES = ['profiles', 'clinics', 'clinic_members', 'patients']
+const TABLES = [
+  'profiles',
+  'clinics',
+  'clinic_members',
+  'patients',
+  'professionals',
+  'services',
+  'professional_availability',
+  'appointments',
+]
 
 /** Matriz planejada: a mesma da migration 0003 (policies) e 0006 (grants). */
 const EXPECTED = {
@@ -24,12 +33,20 @@ const EXPECTED = {
     clinics: ['SELECT', 'UPDATE'],
     clinic_members: ['SELECT'],
     patients: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    professionals: ['SELECT', 'INSERT', 'UPDATE'],
+    services: ['SELECT', 'INSERT', 'UPDATE'],
+    professional_availability: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    appointments: ['SELECT', 'INSERT', 'UPDATE'],
   },
   anon: {
     profiles: [],
     clinics: [],
     clinic_members: [],
     patients: [],
+    professionals: [],
+    services: [],
+    professional_availability: [],
+    appointments: [],
   },
 }
 
@@ -223,7 +240,7 @@ if (writePolicies.length > 0) {
 
 // As 9 policies da migration 0003. Perder uma abriria acesso; ganhar uma que nao
 // esteja no arquivo significa que alguem mexeu no banco fora das migrations.
-const EXPECTED_POLICY_COUNT = 9
+const EXPECTED_POLICY_COUNT = 23
 console.log(`\n    total de policies: ${policies.rows.length} (esperado ${EXPECTED_POLICY_COUNT})`)
 if (policies.rows.length !== EXPECTED_POLICY_COUNT) {
   fail(`esperadas ${EXPECTED_POLICY_COUNT} policies, encontradas ${policies.rows.length}`)

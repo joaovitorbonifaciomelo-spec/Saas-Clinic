@@ -299,3 +299,86 @@ export function parseDbConnection(uri: string): {
     database: database!.split('?')[0]!,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Cenario da Agenda
+// ---------------------------------------------------------------------------
+
+export interface AgendaFixture {
+  professionalId: string
+  serviceId: string
+  appointmentId: string
+  appointmentStartsAt: string
+  appointmentEndsAt: string
+}
+
+/**
+ * Cria profissional, servico, disponibilidade e um agendamento para o ator.
+ *
+ * Tudo com o client do proprio usuario (sujeito ao RLS), nao com service_role:
+ * se a criacao normal nao funcionasse pelo caminho real, o teste de isolamento
+ * estaria medindo outra coisa.
+ *
+ * Nao registra nada no registry: profissionais, servicos, disponibilidade e
+ * agendamentos cascateiam quando a clinica e removida.
+ */
+export async function createAgendaFixture(
+  actor: TestActor,
+  baseDate: Date,
+): Promise<AgendaFixture> {
+  const { data: professional, error: professionalError } = await actor.db
+    .from('professionals')
+    .insert({ clinic_id: actor.clinicId, name: `Profissional ${actor.clinicName}` })
+    .select('id')
+    .single<{ id: string }>()
+  if (professionalError || !professional) {
+    throw new Error(`Falha ao criar profissional: ${professionalError?.message}`)
+  }
+
+  const { data: service, error: serviceError } = await actor.db
+    .from('services')
+    .insert({ clinic_id: actor.clinicId, name: 'Consulta', duration_minutes: 30 })
+    .select('id')
+    .single<{ id: string }>()
+  if (serviceError || !service) {
+    throw new Error(`Falha ao criar servico: ${serviceError?.message}`)
+  }
+
+  const { error: availabilityError } = await actor.db.from('professional_availability').insert({
+    clinic_id: actor.clinicId,
+    professional_id: professional.id,
+    weekday: 1,
+    start_time: '08:00:00',
+    end_time: '12:00:00',
+  })
+  if (availabilityError) {
+    throw new Error(`Falha ao criar disponibilidade: ${availabilityError.message}`)
+  }
+
+  const startsAt = new Date(baseDate)
+  const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000)
+
+  const { data: appointment, error: appointmentError } = await actor.db
+    .from('appointments')
+    .insert({
+      clinic_id: actor.clinicId,
+      patient_id: actor.patientId,
+      professional_id: professional.id,
+      service_id: service.id,
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+    })
+    .select('id')
+    .single<{ id: string }>()
+  if (appointmentError || !appointment) {
+    throw new Error(`Falha ao criar agendamento: ${appointmentError?.message}`)
+  }
+
+  return {
+    professionalId: professional.id,
+    serviceId: service.id,
+    appointmentId: appointment.id,
+    appointmentStartsAt: startsAt.toISOString(),
+    appointmentEndsAt: endsAt.toISOString(),
+  }
+}
