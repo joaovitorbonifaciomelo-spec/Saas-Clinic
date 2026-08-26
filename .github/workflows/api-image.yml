@@ -156,3 +156,5 @@ jobs:
           echo "IMAGE_TAG=sha-${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "Use esta tag no /opt/clinic-saas/.env da VPS." >> $GITHUB_STEP_SUMMARY
+
+# Disparo manual tambem disponivel via workflow_dispatch.
