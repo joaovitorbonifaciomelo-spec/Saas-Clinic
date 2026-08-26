@@ -31,11 +31,17 @@
 
 -- -----------------------------------------------------------------------------
 -- Zera e reconstroi exatamente a matriz. A ordem importa: revoke primeiro.
+--
+-- PUBLIC entra no revoke junto de anon e authenticated. PUBLIC e o papel
+-- implicito que TODO papel herda: um privilegio concedido a PUBLIC alcanca
+-- anon e authenticated mesmo que os dois estejam explicitamente limpos, e nao
+-- apareceria numa inspecao que olhasse so para os papeis nomeados. Revogar aqui
+-- torna a matriz autoritativa de verdade, e nao apenas aparentemente.
 -- -----------------------------------------------------------------------------
-revoke all on public.profiles       from anon, authenticated;
-revoke all on public.clinics        from anon, authenticated;
-revoke all on public.clinic_members from anon, authenticated;
-revoke all on public.patients       from anon, authenticated;
+revoke all on public.profiles       from public, anon, authenticated;
+revoke all on public.clinics        from public, anon, authenticated;
+revoke all on public.clinic_members from public, anon, authenticated;
+revoke all on public.patients       from public, anon, authenticated;
 
 -- profiles: le e edita o proprio registro (o RLS restringe a linha).
 grant select, update on public.profiles to authenticated;
@@ -58,3 +64,12 @@ grant all on public.profiles       to service_role;
 grant all on public.clinics        to service_role;
 grant all on public.clinic_members to service_role;
 grant all on public.patients       to service_role;
+
+-- -----------------------------------------------------------------------------
+-- Schema public: CREATE nao deve existir para PUBLIC, anon nem authenticated —
+-- criar objetos ali seria escapar de todo o modelo de isolamento. USAGE e
+-- necessario e permanece. Reafirmado aqui para que o estado seja garantido pela
+-- migration, e nao apenas herdado do default do projeto.
+-- -----------------------------------------------------------------------------
+revoke create on schema public from public, anon, authenticated;
+grant usage on schema public to anon, authenticated, service_role;

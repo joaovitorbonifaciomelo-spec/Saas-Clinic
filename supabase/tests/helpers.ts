@@ -267,3 +267,35 @@ export async function createActor(
     patientName,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Conexao direta ao Postgres (introspeccao de catalogo)
+// ---------------------------------------------------------------------------
+
+/**
+ * Campos discretos em vez da URI inteira.
+ *
+ * Senhas do Supabase costumam conter caracteres reservados no componente
+ * userinfo de uma URI (`[`, `]`, `@`, `#`). O parser de connection string
+ * normalizaria esses caracteres e a autenticacao falharia com 28P01 — que
+ * parece "senha errada" e na verdade e erro de parsing.
+ */
+export function parseDbConnection(uri: string): {
+  user: string
+  password: string
+  host: string
+  port: number
+  database: string
+} {
+  const match = /^postgresql:\/\/([^:]+):(.*)@([^/]+)\/(.+)$/.exec(uri)
+  if (!match) throw new Error('SUPABASE_DB_URL em formato inesperado.')
+  const [, user, password, hostPort, database] = match
+  const [host, port] = hostPort!.split(':')
+  return {
+    user: decodeURIComponent(user!),
+    password: decodeURIComponent(password!),
+    host: host!,
+    port: Number(port ?? 5432),
+    database: database!.split('?')[0]!,
+  }
+}

@@ -93,7 +93,8 @@ for (const row of rls.rows) {
   )
   if (!row.enabled) fail(`RLS DESABILITADO em ${row.table}`)
 }
-if (rls.rows.length !== TABLES.length) fail(`esperadas ${TABLES.length} tabelas, achadas ${rls.rows.length}`)
+if (rls.rows.length !== TABLES.length)
+  fail(`esperadas ${TABLES.length} tabelas, achadas ${rls.rows.length}`)
 
 // --- Privilegios efetivos ----------------------------------------------------
 const grants = await client.query(
@@ -110,6 +111,66 @@ for (const row of grants.rows) {
   byRole[row.grantee] ??= {}
   byRole[row.grantee][row.table_name] ??= []
   byRole[row.grantee][row.table_name].push(row.privilege_type)
+}
+
+/**
+ * Privilegios que `authenticated` NUNCA pode ter.
+ *
+ * TRUNCATE e o mais perigoso: RLS cobre SELECT/INSERT/UPDATE/DELETE e NAO cobre
+ * TRUNCATE. Com esse privilegio, um usuario da Clinica A apaga os dados de todos
+ * os tenants sem violar policy nenhuma — e nenhum dos 24 testes de isolamento
+ * detectaria, porque eles exercitam apenas as quatro operacoes cobertas por RLS.
+ * TRIGGER permitiria anexar gatilhos a tabelas compartilhadas.
+ */
+const FORBIDDEN_FOR_AUTHENTICATED = ['TRUNCATE', 'TRIGGER', 'REFERENCES']
+
+console.log('\n  PRIVILEGIOS PROIBIDOS PARA authenticated')
+console.log('  ' + '-'.repeat(64))
+for (const table of TABLES) {
+  const held = await client.query(
+    `select p as priv, has_table_privilege('authenticated', $1, p) as granted
+       from unnest($2::text[]) as p`,
+    [`public.${table}`, FORBIDDEN_FOR_AUTHENTICATED],
+  )
+  const violations = held.rows.filter((r) => r.granted).map((r) => r.priv)
+  console.log(
+    `    ${table.padEnd(16)} ${violations.length === 0 ? 'nenhum dos proibidos (OK)' : 'POSSUI: ' + violations.join(', ')}`,
+  )
+  for (const priv of violations) fail(`authenticated tem ${priv} em ${table}`)
+}
+
+// --- PUBLIC ------------------------------------------------------------------
+console.log('\n  PRIVILEGIOS VIA PUBLIC (papel implicito herdado por todos)')
+console.log('  ' + '-'.repeat(64))
+const publicGrants = await client.query(
+  `select table_name, privilege_type from information_schema.role_table_grants
+    where table_schema = 'public' and table_name = any($1) and grantee = 'PUBLIC'`,
+  [TABLES],
+)
+if (publicGrants.rows.length === 0) {
+  console.log('    nenhum privilegio concedido a PUBLIC nas 4 tabelas (OK)')
+} else {
+  for (const row of publicGrants.rows) fail(`PUBLIC tem ${row.privilege_type} em ${row.table_name}`)
+}
+
+// --- Schema ------------------------------------------------------------------
+console.log('\n  PRIVILEGIOS DO SCHEMA public')
+console.log('  ' + '-'.repeat(64))
+const schemaPrivs = await client.query(
+  `select r as role,
+          has_schema_privilege(r, 'public', 'CREATE') as create_priv,
+          has_schema_privilege(r, 'public', 'USAGE') as usage_priv
+     from unnest(array['anon','authenticated','service_role']) as r`,
+)
+for (const row of schemaPrivs.rows) {
+  console.log(
+    `    ${row.role.padEnd(16)} CREATE=${row.create_priv ? 'SIM' : 'nao'}   USAGE=${row.usage_priv ? 'sim' : 'nao'}`,
+  )
+  // CREATE no schema permitiria criar objetos e escapar do modelo de isolamento.
+  if (row.create_priv && row.role !== 'service_role') {
+    fail(`${row.role} tem CREATE no schema public`)
+  }
+  if (!row.usage_priv) fail(`${row.role} sem USAGE no schema public`)
 }
 
 for (const role of ['anon', 'authenticated', 'service_role']) {
@@ -131,7 +192,8 @@ for (const role of ['anon', 'authenticated', 'service_role']) {
     for (const table of TABLES) {
       const actual = byRole[role]?.[table] ?? []
       for (const needed of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
-        if (!actual.includes(needed)) fail(`service_role.${table} sem ${needed} (uso administrativo)`)
+        if (!actual.includes(needed))
+          fail(`service_role.${table} sem ${needed} (uso administrativo)`)
       }
     }
   }
@@ -147,7 +209,9 @@ const policies = await client.query(
   [TABLES],
 )
 for (const row of policies.rows) {
-  console.log(`    ${row.tablename.padEnd(16)} ${row.cmd.padEnd(6)} ${row.policyname}  roles=${row.roles}`)
+  console.log(
+    `    ${row.tablename.padEnd(16)} ${row.cmd.padEnd(6)} ${row.policyname}  roles=${row.roles}`,
+  )
 }
 
 const writePolicies = policies.rows.filter(
@@ -155,6 +219,14 @@ const writePolicies = policies.rows.filter(
 )
 if (writePolicies.length > 0) {
   fail(`clinic_members tem policy de escrita: ${writePolicies.map((r) => r.policyname).join(', ')}`)
+}
+
+// As 9 policies da migration 0003. Perder uma abriria acesso; ganhar uma que nao
+// esteja no arquivo significa que alguem mexeu no banco fora das migrations.
+const EXPECTED_POLICY_COUNT = 9
+console.log(`\n    total de policies: ${policies.rows.length} (esperado ${EXPECTED_POLICY_COUNT})`)
+if (policies.rows.length !== EXPECTED_POLICY_COUNT) {
+  fail(`esperadas ${EXPECTED_POLICY_COUNT} policies, encontradas ${policies.rows.length}`)
 }
 
 // --- Trigger em auth.users ---------------------------------------------------

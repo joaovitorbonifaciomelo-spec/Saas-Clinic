@@ -149,9 +149,18 @@ pnpm --filter @clinicas/web dev
 ```bash
 pnpm lint
 pnpm typecheck
-pnpm test            # unitários, não tocam o banco
+pnpm test               # unitários, não tocam o banco
 pnpm check:secrets
+pnpm verify:privileges  # introspecção read-only do banco vs. matriz planejada
 ```
+
+### Gate de privilégios
+
+`pnpm verify:privileges` compara os privilégios **efetivos** no banco contra a matriz planejada e sai com código 1 em qualquer divergência. As mesmas asserções vivem em `supabase/tests/privileges.test.ts`, então rodam junto com `pnpm test:isolation`.
+
+Isso não é redundância com os testes de isolamento — é uma camada que eles **não conseguem cobrir**. Os 24 testes A/B exercitam `SELECT`/`INSERT`/`UPDATE`/`DELETE`, as quatro operações filtradas por RLS. `TRUNCATE` não passa por policy nenhuma: com esse privilégio, um usuário da Clínica A apagaria os dados de todos os tenants sem violar uma única regra de RLS, e os 24 testes continuariam verdes.
+
+Foi exatamente o que aconteceu na primeira aplicação das migrations — a plataforma do Supabase reconciliou _default privileges_ concedendo `ALL`, e como `GRANT` é aditivo, o excesso sobreviveu. Só a introspeção de catálogo pegou. Rode este gate depois de qualquer migration que crie tabelas.
 
 ### Teste de isolamento entre clínicas (critério de aceite)
 
