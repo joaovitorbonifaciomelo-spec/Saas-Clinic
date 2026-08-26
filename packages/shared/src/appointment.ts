@@ -192,3 +192,23 @@ export interface AppointmentWarningsError {
 }
 
 export const APPOINTMENT_WARNINGS_ERROR = 'APPOINTMENT_WARNINGS'
+
+/**
+ * A "proxima consulta" do paciente.
+ *
+ * Exclui TODOS os estados terminais, nao apenas `cancelled`. Um agendamento
+ * `completed` ou `no_show` ja teve desfecho — mesmo que a data ainda esteja no
+ * futuro, ele nao e a proxima consulta de ninguem.
+ *
+ * O filtro anterior olhava so para `cancelled`. O teste manual nao pegou porque
+ * ali o realizado estava no passado e caia fora pelo corte de data; o smoke em
+ * producao, marcando como realizado um horario futuro, expos a falha.
+ */
+export function selectNextAppointment<T extends { status: AppointmentStatus; startsAt: string }>(
+  appointments: readonly T[],
+  now: Date = new Date(),
+): T | undefined {
+  return appointments
+    .filter((a) => !isTerminalStatus(a.status) && new Date(a.startsAt) >= now)
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0]
+}

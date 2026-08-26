@@ -9,7 +9,7 @@
  * justamente a marca DESAPARECER quando a condição deixa de valer.
  */
 import { describe, expect, it } from 'vitest'
-import { APPOINTMENT_STATUS_TRANSITIONS, canTransition } from './appointment'
+import { APPOINTMENT_STATUS_TRANSITIONS, canTransition, selectNextAppointment } from './appointment'
 import { createServiceSchema } from './service'
 import { availabilityBlockSchema } from './availability'
 
@@ -220,5 +220,56 @@ describe('H. Reagendamento não muda status sozinho', () => {
   it('reschedule_requested não pula para confirmed nem completed', () => {
     expect(canTransition('reschedule_requested', 'confirmed')).toBe(false)
     expect(canTransition('reschedule_requested', 'completed')).toBe(false)
+  })
+})
+
+describe('I. Próxima consulta ignora TODOS os estados terminais', () => {
+  const futuro = (dias: number) => new Date(Date.now() + dias * 86400_000).toISOString()
+  const passado = (dias: number) => new Date(Date.now() - dias * 86400_000).toISOString()
+
+  it('escolhe o futuro mais próximo que ainda está ativo', () => {
+    const r = selectNextAppointment([
+      { status: 'scheduled' as const, startsAt: futuro(10) },
+      { status: 'confirmed' as const, startsAt: futuro(3) },
+      { status: 'scheduled' as const, startsAt: futuro(20) },
+    ])
+    expect(new Date(r!.startsAt).getTime()).toBeLessThan(Date.now() + 4 * 86400_000)
+  })
+
+  it('cancelado não vira próxima consulta', () => {
+    const r = selectNextAppointment([{ status: 'cancelled' as const, startsAt: futuro(1) }])
+    expect(r).toBeUndefined()
+  })
+
+  it('REALIZADO futuro não vira próxima consulta', () => {
+    // O bug que este teste impede: o filtro olhava so para `cancelled`, entao um
+    // `completed` com data futura aparecia como proxima consulta. Encontrado
+    // pelo smoke test em producao, nao pelo teste manual.
+    const r = selectNextAppointment([{ status: 'completed' as const, startsAt: futuro(1) }])
+    expect(r).toBeUndefined()
+  })
+
+  it('falta (no_show) futura não vira próxima consulta', () => {
+    const r = selectNextAppointment([{ status: 'no_show' as const, startsAt: futuro(1) }])
+    expect(r).toBeUndefined()
+  })
+
+  it('agendamento passado não vira próxima consulta', () => {
+    const r = selectNextAppointment([{ status: 'scheduled' as const, startsAt: passado(1) }])
+    expect(r).toBeUndefined()
+  })
+
+  it('entre terminais futuros e um ativo mais distante, escolhe o ativo', () => {
+    const r = selectNextAppointment([
+      { status: 'completed' as const, startsAt: futuro(1) },
+      { status: 'cancelled' as const, startsAt: futuro(2) },
+      { status: 'no_show' as const, startsAt: futuro(3) },
+      { status: 'awaiting_confirmation' as const, startsAt: futuro(9) },
+    ])
+    expect(r?.status).toBe('awaiting_confirmation')
+  })
+
+  it('histórico vazio não tem próxima consulta', () => {
+    expect(selectNextAppointment([])).toBeUndefined()
   })
 })

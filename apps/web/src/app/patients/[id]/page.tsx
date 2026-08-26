@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import {
   APPOINTMENT_STATUS_LABELS,
+  selectNextAppointment,
   type AppointmentWithRelations,
   type Patient,
 } from '@clinicas/shared'
@@ -33,10 +34,10 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
   )
 
   const now = new Date()
-  // Proxima consulta: a mais proxima ainda por vir que nao foi cancelada.
-  const next = appointments
-    .filter((a) => a.status !== 'cancelled' && new Date(a.startsAt) >= now)
-    .sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0]
+  // Proxima consulta: a mais proxima ainda por vir que nao esta num estado
+  // terminal. Ver selectNextAppointment — o filtro so por `cancelled` deixava
+  // um `completed` futuro aparecer como proxima.
+  const next = selectNextAppointment(appointments, now)
 
   const history = [...appointments].sort((a, b) => b.startsAt.localeCompare(a.startsAt))
 
