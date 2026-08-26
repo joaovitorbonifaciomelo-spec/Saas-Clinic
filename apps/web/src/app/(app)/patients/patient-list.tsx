@@ -48,7 +48,10 @@ export function PatientList({
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar por nome, telefone ou convênio"
+            /* Curto de proposito: o campo tem ~300px e o texto longo era cortado
+               no meio da palavra. O que a busca cobre esta no title. */
+            placeholder="Buscar paciente"
+            title="Busca por nome, telefone ou convênio"
             aria-label="Buscar pacientes"
           />
         </div>

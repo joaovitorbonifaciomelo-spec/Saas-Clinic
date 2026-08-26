@@ -15,7 +15,7 @@ export type AppointmentStatus = z.infer<typeof appointmentStatusSchema>
 
 export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
   scheduled: 'Agendado',
-  awaiting_confirmation: 'Aguardando confirmacao',
+  awaiting_confirmation: 'Aguardando confirmação',
   confirmed: 'Confirmado',
   reschedule_requested: 'Reagendamento solicitado',
   cancelled: 'Cancelado',
