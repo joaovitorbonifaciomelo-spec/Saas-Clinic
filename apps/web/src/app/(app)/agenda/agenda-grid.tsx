@@ -7,12 +7,25 @@ import {
   type AvailabilityBlock,
 } from '@clinicas/shared'
 import { localDateKey, localTimeLabel, weekdayOf } from './agenda-time'
-import { minutesBetween } from '../../ui/format'
 
 /** Altura de uma hora na grade. Define a escala vertical inteira. */
-const HOUR_PX = 56
+const HOUR_PX = 60
 const DEFAULT_START = 7
 const DEFAULT_END = 20
+
+/**
+ * Quanto conteudo cabe dentro de um bloco, decidido pela altura em pixels — nao
+ * pela duracao em minutos. Duracao so vira altura depois de passar por HOUR_PX;
+ * usar minutos como proxy foi o que fazia um bloco de 30 min pedir tres linhas
+ * de texto num espaco de uma, e o corte aparecia no meio da palavra.
+ *
+ * Os numeros sao a soma real das alturas de linha declaradas no CSS
+ * (.ag-appt-time 10.5px, .ag-appt-name 12px, line-height 1.35, gap 1px).
+ */
+const PAD_Y = 8
+const FITS_TWO_LINES = 32
+const FITS_THREE_LINES = 47
+const FITS_FOUR_LINES = 62
 
 export interface Column {
   key: string
@@ -161,8 +174,29 @@ export function AgendaGrid(props: AgendaGridProps) {
 
           return (
             <div key={col.key} className="ag-col">
+              {/*
+                A faixa de hora vazia e o alvo de criacao: clicar num buraco da
+                agenda e o gesto natural de quem esta com o paciente na frente.
+                O minuto vem da posicao do clique, arredondado para 15 — precisao
+                de pixel viraria 10:07.
+              */}
               {horas.slice(0, -1).map((h) => (
-                <div key={h} className="ag-slot" style={{ top: toTop(h * 60), height: HOUR_PX }} />
+                <button
+                  key={h}
+                  type="button"
+                  className="ag-slot"
+                  style={{ top: toTop(h * 60), height: HOUR_PX }}
+                  aria-label={`Novo agendamento às ${String(h).padStart(2, '0')}:00`}
+                  onClick={(e) => {
+                    const y = e.clientY - e.currentTarget.getBoundingClientRect().top
+                    const min = Math.min(45, Math.max(0, Math.round((y / HOUR_PX) * 4) * 15))
+                    props.onCreate(
+                      col.dayKey,
+                      `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
+                      col.professionalId,
+                    )
+                  }}
+                />
               ))}
 
               {/* Faixas de atendimento ao fundo: contexto, nao bloqueio. */}
@@ -191,16 +225,42 @@ export function AgendaGrid(props: AgendaGridProps) {
                 const ini = localMinutes(a.startsAt, props.timezone)
                 const fim = localMinutes(a.endsAt, props.timezone)
                 const lane = lanes.get(a.id) ?? 0
-                const dur = minutesBetween(a.startsAt, a.endsAt)
+                const encaixe = props.overlapping.has(a.id)
+                const fora = props.outside.has(a.id)
+
+                const altura = Math.max(22, ((fim - ini) / 60) * HOUR_PX - 2)
+                const util = altura - PAD_Y
+                const curto = util < FITS_TWO_LINES
+
+                /*
+                 * Ordem de prioridade quando o espaco e escasso: horario e nome
+                 * sempre; depois excecao (encaixe / fora do horario), que e o
+                 * que faz alguem parar e olhar; so entao servico; e por ultimo o
+                 * status escrito, que a cor e a borda ja comunicam.
+                 */
+                const excecao = encaixe || fora
+                const linha3 = util >= FITS_THREE_LINES
+                const linha4 = util >= FITS_FOUR_LINES
+                const mostraFlags = excecao && linha3
+                const mostraMeta = mostraFlags ? linha4 : linha3
+                const mostraFoot = excecao ? false : linha4
+
                 const classes = [
                   'ag-appt',
                   a.status,
-                  props.overlapping.has(a.id) ? 'is-overlap' : '',
-                  props.outside.has(a.id) ? 'is-outside' : '',
-                  dur <= 20 ? 'is-short' : '',
+                  encaixe ? 'is-overlap' : '',
+                  fora ? 'is-outside' : '',
+                  curto ? 'is-short' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')
+
+                const detalhe = [
+                  a.serviceName ?? 'Sem serviço',
+                  col.professionalId ? null : a.professionalName,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
 
                 return (
                   <button
@@ -210,34 +270,41 @@ export function AgendaGrid(props: AgendaGridProps) {
                     onClick={() => props.onSelect(a)}
                     style={{
                       top: toTop(ini) + 1,
-                      height: Math.max(20, ((fim - ini) / 60) * HOUR_PX - 2),
+                      height: altura,
                       left: `calc(${(lane / laneCount) * 100}% + 2px)`,
                       width: `calc(${(1 / laneCount) * 100}% - 4px)`,
                     }}
-                    title={`${localTimeLabel(a.startsAt, props.timezone)}–${localTimeLabel(a.endsAt, props.timezone)} · ${a.patientName} · ${APPOINTMENT_STATUS_LABELS[a.status]}`}
+                    /*
+                     * O bloco corta o que nao cabe, entao o conteudo completo
+                     * precisa estar em algum lugar: aqui e no painel lateral ao
+                     * clicar. Nada que a grade esconde fica inacessivel.
+                     */
+                    title={[
+                      `${localTimeLabel(a.startsAt, props.timezone)}–${localTimeLabel(a.endsAt, props.timezone)}`,
+                      a.patientName,
+                      detalhe,
+                      APPOINTMENT_STATUS_LABELS[a.status],
+                      encaixe ? 'encaixe (sobreposição confirmada)' : null,
+                      fora ? 'fora do horário de atendimento' : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   >
                     <span className="ag-appt-time tabular">
                       {localTimeLabel(a.startsAt, props.timezone)}
                     </span>
                     <span className="ag-appt-name">{a.patientName}</span>
-                    {dur > 25 ? (
-                      <span className="ag-appt-meta">
-                        {a.serviceName ?? 'Sem serviço'}
-                        {!col.professionalId ? ` · ${a.professionalName}` : ''}
+                    {mostraFlags ? (
+                      <span className="ag-appt-flags">
+                        {encaixe ? <span className="flag">encaixe</span> : null}
+                        {fora ? <span className="flag alt">fora do horário</span> : null}
                       </span>
                     ) : null}
-                    {dur > 40 ? (
+                    {mostraMeta ? <span className="ag-appt-meta">{detalhe}</span> : null}
+                    {mostraFoot ? (
                       <span className="ag-appt-foot">
                         <span className={`dot ${a.status}`} />
-                        {APPOINTMENT_STATUS_LABELS[a.status]}
-                      </span>
-                    ) : null}
-                    {(props.overlapping.has(a.id) || props.outside.has(a.id)) && dur > 30 ? (
-                      <span className="ag-appt-flags">
-                        {props.overlapping.has(a.id) ? <span className="flag">encaixe</span> : null}
-                        {props.outside.has(a.id) ? (
-                          <span className="flag alt">fora do horário</span>
-                        ) : null}
+                        <span>{APPOINTMENT_STATUS_LABELS[a.status]}</span>
                       </span>
                     ) : null}
                   </button>
