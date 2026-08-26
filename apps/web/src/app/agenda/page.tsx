@@ -34,23 +34,37 @@ export default async function AgendaPage({ searchParams }: AgendaPageProps) {
 
   const clinicId = activeClinic.clinicId
 
-  // Em paralelo: a grade precisa das quatro listas antes de renderizar.
-  const [appointments, professionals, services, patients] = await Promise.all([
+  /*
+   * TUDO numa unica onda de requisicoes.
+   *
+   * A disponibilidade ficava numa segunda espera, depois do Promise.all — mas
+   * ela so depende de `professionalId`, que vem da URL, nao do resultado das
+   * outras chamadas. Era serializacao sem motivo, e cada ida e volta pelo
+   * Funnel custa ~330ms medidos. Buscar junto tirou uma onda inteira da pagina.
+   *
+   * Sem filtro de profissional a grade mostra varios profissionais, e um fundo
+   * de disponibilidade unico nao significaria nada — por isso a lista vazia.
+   */
+  const [appointments, professionals, services, patients, availability] = await Promise.all([
     apiFetch<AppointmentWithRelations[]>(`/api/appointments?${query.toString()}`, { clinicId }),
     apiFetch<Professional[]>('/api/professionals', { clinicId }),
     apiFetch<Service[]>('/api/services?active=true', { clinicId }),
     apiFetch<Patient[]>('/api/patients', { clinicId }),
+    /*
+     * Disponibilidade da clinica inteira: alimenta o fundo da grade quando ha
+     * filtro E a marca "fora do horario" em cada cartao, sempre.
+     *
+     * TOLERANTE A API ANTIGA de proposito. A Vercel faz deploy automatico do
+     * frontend no push, mas a imagem da VPS so e atualizada manualmente — entao
+     * existe uma janela em que a tela nova conversa com a API velha, que ainda
+     * nao tem esta rota. Sem o catch, a agenda inteira quebraria com 404 nessa
+     * janela por causa de um enfeite. Aqui ela apenas deixa de mostrar as
+     * marcas, e volta a mostra-las quando a API for atualizada.
+     */
+    apiFetch<AvailabilityBlock[]>('/api/professionals/availability', { clinicId }).catch(
+      () => [] as AvailabilityBlock[],
+    ),
   ])
-
-  // Disponibilidade so quando ha um profissional filtrado: sem filtro, a grade
-  // mostra varios profissionais e um fundo unico nao significaria nada.
-  let availability: AvailabilityBlock[] = []
-  if (professionalId) {
-    availability = await apiFetch<AvailabilityBlock[]>(
-      `/api/professionals/${professionalId}/availability`,
-      { clinicId },
-    )
-  }
 
   return (
     <main className="container wide">

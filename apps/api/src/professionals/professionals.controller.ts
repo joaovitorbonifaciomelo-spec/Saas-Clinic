@@ -39,6 +39,16 @@ export class ProfessionalsController {
     return this.professionals.list(clinicId, active === 'true')
   }
 
+  /*
+   * DECLARADA ANTES DE @Get(':id') DE PROPOSITO.
+   * O Nest resolve rotas na ordem de declaracao: se ':id' viesse primeiro,
+   * "availability" seria capturado como um id de profissional.
+   */
+  @Get('availability')
+  listClinicAvailability(@ActiveClinicId() clinicId: string): Promise<AvailabilityBlock[]> {
+    return this.professionals.listClinicAvailability(clinicId)
+  }
+
   @Get(':id')
   findOne(@ActiveClinicId() clinicId: string, @Param('id') id: string): Promise<Professional> {
     return this.professionals.findById(clinicId, id)

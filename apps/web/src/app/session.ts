@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import type { ClinicMembership, UserProfile } from '@clinicas/shared'
-import { fetchMe, readActiveClinicCookie, resolveActiveClinicId } from '../lib/api'
+import { ApiError, fetchMe, readActiveClinicCookie, resolveActiveClinicId } from '../lib/api'
 
 export interface ActiveSession {
   profile: UserProfile
@@ -16,7 +16,28 @@ export interface ActiveSession {
  * do cookie sozinho.
  */
 export async function requireActiveSession(): Promise<ActiveSession> {
-  const me = await fetchMe()
+  let me: Awaited<ReturnType<typeof fetchMe>>
+
+  try {
+    me = await fetchMe()
+  } catch (error) {
+    /*
+     * Sessao expirada tem desfecho definido: volta para o login.
+     *
+     * Antes o ApiError subia e a rota protegida respondia 500 com stack trace —
+     * o usuario via uma pagina de erro em vez de simplesmente ser deslogado.
+     * O proxy cobre o caso de nao haver cookie nenhum; este catch cobre o token
+     * que existe mas ja nao vale.
+     *
+     * So 401 e tratado. Qualquer outra falha continua subindo: esconder um erro
+     * de infraestrutura atras de um redirect para /login transformaria "a API
+     * caiu" em "voce foi deslogado", e o diagnostico ficaria impossivel.
+     */
+    if (error instanceof ApiError && error.status === 401) {
+      redirect('/login')
+    }
+    throw error
+  }
 
   if (me.memberships.length === 0) {
     redirect('/onboarding')

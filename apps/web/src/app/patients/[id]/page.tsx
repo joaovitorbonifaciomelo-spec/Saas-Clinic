@@ -48,7 +48,12 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
           <strong>Telefone:</strong> {patient.phone}
         </p>
         <p>
-          <strong>Nascimento:</strong> {patient.birthDate ?? '—'}
+          {/*
+            Apresentacao em pt-BR. O banco continua guardando `date` em ISO
+            (AAAA-MM-DD) — a conversao e so na tela.
+          */}
+          <strong>Nascimento:</strong>{' '}
+          {patient.birthDate ? formatDateLabel(patient.birthDate) : '—'}
         </p>
         <p>
           <strong>Convenio:</strong> {patient.insuranceProvider ?? '—'}

@@ -123,6 +123,28 @@ export class ProfessionalsService {
     return toProfessional(data as unknown as ProfessionalRow)
   }
 
+  /**
+   * Todos os blocos ativos da clinica, de todos os profissionais.
+   *
+   * Existe para a agenda conseguir marcar "fora do horario" em qualquer
+   * agendamento sem depender de filtro de profissional. A alternativa seria uma
+   * chamada por profissional (N+1) ou um badge que so aparece com filtro ativo —
+   * meia-funcionalidade que confunde mais do que ajuda.
+   */
+  async listClinicAvailability(clinicId: string): Promise<AvailabilityBlock[]> {
+    const { data, error } = await this.supabase
+      .from('professional_availability')
+      .select(AVAILABILITY_COLUMNS)
+      .eq('clinic_id', clinicId)
+      .eq('active', true)
+      .order('professional_id', { ascending: true })
+      .order('weekday', { ascending: true })
+      .order('start_time', { ascending: true })
+
+    if (error) throw mapPostgrestError(error)
+    return (data as unknown as AvailabilityRow[]).map(toBlock)
+  }
+
   async listAvailability(clinicId: string, professionalId: string): Promise<AvailabilityBlock[]> {
     // Confirma que o profissional existe NESTA clinica antes de responder, para
     // que um id de outro tenant devolva 404 em vez de uma lista vazia — que

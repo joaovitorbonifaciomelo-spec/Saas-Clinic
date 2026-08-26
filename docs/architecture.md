@@ -268,3 +268,34 @@ curl -i http://localhost:3333/api/patients \
 ```
 
 O primeiro deve devolver 404; o segundo, 403 — e nenhum dos dois pode conter dado da outra clínica.
+
+---
+
+## 9. Configuração do Supabase Auth (produção)
+
+O link de confirmação de e-mail **não é montado pelo nosso código**. Não há
+`emailRedirectTo` em nenhum lugar de `apps/web` — auditado. O destino vem
+inteiramente do painel do Supabase, e por isso precisa estar correto lá.
+
+| Campo         | Valor                                   |
+| ------------- | --------------------------------------- |
+| Site URL      | `https://saas-clinic-web.vercel.app`    |
+| Redirect URLs | `https://saas-clinic-web.vercel.app/**` |
+
+**Sintoma quando está errado:** o e-mail de confirmação do primeiro cadastro
+aponta para `http://localhost:3000`. O usuário clica, não chega a lugar nenhum,
+e parece bug da aplicação. Foi o que aconteceu no primeiro teste real.
+
+Como o valor mora no painel e não no repositório, ele **não é coberto por
+nenhum teste automatizado** — se o projeto Supabase for recriado ou trocado,
+esta configuração precisa ser refeita à mão. É o único ponto do fluxo de auth
+com essa propriedade.
+
+### O que o código garante
+
+- Nenhuma referência a `localhost` em `apps/web`.
+- `WEB_ORIGIN` na API **não tem default em produção**: se a variável faltar com
+  `NODE_ENV=production`, o boot falha em vez de cair silenciosamente em
+  `http://localhost:3000` e recusar o frontend real no CORS.
+- Sessão expirada redireciona para `/login` em vez de estourar `ApiError` numa
+  rota protegida.

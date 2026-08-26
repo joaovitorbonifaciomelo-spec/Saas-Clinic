@@ -311,3 +311,122 @@ button.block {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* ===================== Estabilizacao pos-teste ===================== */
+
+/* Esqueleto de carregamento: navegacao responde na hora. */
+.skeleton-line {
+  height: 14px;
+  margin: 10px 0;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--border) 25%, #eef1f4 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: skeleton 1.2s ease-in-out infinite;
+}
+@keyframes skeleton {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line {
+    animation: none;
+  }
+}
+
+/* Marcas do cartao: texto + forma, nunca so cor. */
+.appointment-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.flag {
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.flag-overlap {
+  color: #7a4a00;
+  background: #fff5e6;
+}
+.flag-outside {
+  color: #6b3fa0;
+  background: #f4efff;
+}
+
+/* Fora da disponibilidade: borda tracejada a direita, distinta do encaixe. */
+.appointment.is-outside {
+  border-right: 2px dashed #7c3aed;
+}
+
+/*
+ * SEMANA: a coluna precisa poder rolar sozinha.
+ *
+ * Sem altura maxima, um dia com muitos agendamentos esticava a linha inteira do
+ * grid e os demais dias ficavam com metros de espaco vazio. Com min-width nas
+ * colunas e overflow-x no container, a semana rola lateralmente em tela estreita
+ * em vez de espremer os cartoes ate ficarem ilegiveis.
+ */
+.week-grid {
+  grid-template-columns: repeat(7, minmax(160px, 1fr));
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.week-grid .day-column {
+  max-height: 62vh;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.week-grid .day-header {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  padding-bottom: 4px;
+  z-index: 1;
+}
+
+/* Nome longo de paciente nao pode estourar nem quebrar o cartao. */
+.appointment-name,
+.appointment-meta,
+.appointment-status {
+  overflow-wrap: anywhere;
+}
+
+.day-column {
+  min-width: 0;
+}
+.appointment {
+  min-width: 0;
+}
+
+/* Barra de ferramentas em tela estreita: empilha em vez de transbordar. */
+@media (max-width: 720px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .toolbar-group {
+    flex-wrap: wrap;
+  }
+  .toolbar-group select,
+  .toolbar-group input {
+    flex: 1;
+    min-width: 0;
+  }
+  .week-grid {
+    grid-template-columns: repeat(7, minmax(150px, 1fr));
+  }
+  .drawer {
+    width: 100%;
+  }
+}
