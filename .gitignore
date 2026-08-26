@@ -22,3 +22,6 @@ supabase/.branches/
 .DS_Store
 Thumbs.db
 *.log
+
+# Capturas de tela geradas para revisao de UI (nao sao fonte)
+shots/

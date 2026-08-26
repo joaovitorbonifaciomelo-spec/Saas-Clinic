@@ -1396,6 +1396,9 @@ tbody tr:hover {
    * transbordar pelos DOIS lados. O nome aparecia cortado no comeco e no fim.
    */
   align-items: stretch;
+  /* Container query abaixo depende disto: a largura do bloco varia com o numero
+     de faixas paralelas do dia, e nenhuma media query da tela sabe esse numero. */
+  container-type: inline-size;
   gap: 1px;
   padding: 4px 7px;
   text-align: left;
@@ -1477,6 +1480,25 @@ tbody tr:hover {
 }
 .ag-appt.is-short .ag-appt-name {
   flex: 1 1 auto;
+}
+
+/*
+ * Bloco estreito (semana com varios profissionais em paralelo): o horario sai.
+ * A posicao vertical na grade ja diz a hora — repeti-la custava a largura toda e
+ * sobrava um caractere para o nome do paciente, que e a unica coisa que so o
+ * texto pode dizer.
+ */
+@container (max-width: 112px) {
+  .ag-appt-time {
+    display: none;
+  }
+}
+@container (max-width: 76px) {
+  .ag-appt-meta,
+  .ag-appt-foot,
+  .ag-appt-flags {
+    display: none;
+  }
 }
 
 .ag-appt.scheduled {

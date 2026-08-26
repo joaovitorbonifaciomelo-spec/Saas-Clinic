@@ -120,22 +120,47 @@ export function AgendaGrid(props: AgendaGridProps) {
       .filter((a) => !col.professionalId || a.professionalId === col.professionalId)
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
 
-    // Alocacao gulosa em faixas: cada agendamento vai para a primeira faixa que
-    // ja terminou. O numero de faixas usadas divide a largura.
+    /*
+     * Alocacao gulosa em faixas, mas por AGRUPAMENTO de sobreposicoes, nao pelo
+     * dia inteiro. Um unico encaixe as 09h45 nao pode estreitar a consulta das
+     * 14h: se contarmos faixas por dia, tres profissionais em paralelo por dez
+     * minutos deixam todos os blocos do dia com um terco da largura, e sobra
+     * espaco para quatro letras do nome do paciente.
+     *
+     * Um agrupamento termina quando comeca um agendamento que nao encosta em
+     * nenhum dos anteriores; ai a largura volta a ser inteira.
+     */
+    const lanes = new Map<string, { lane: number; total: number }>()
     const laneEnd: number[] = []
-    const lanes = new Map<string, number>()
+    let grupo: string[] = []
+    let grupoFim = -1
+
+    const fecharGrupo = () => {
+      const total = Math.max(1, laneEnd.length)
+      for (const id of grupo) lanes.get(id)!.total = total
+      grupo = []
+      laneEnd.length = 0
+      grupoFim = -1
+    }
+
     for (const a of doDia) {
       const ini = localMinutes(a.startsAt, props.timezone)
       const fim = localMinutes(a.endsAt, props.timezone)
+      if (grupo.length > 0 && ini >= grupoFim) fecharGrupo()
+
       let lane = laneEnd.findIndex((end) => end <= ini)
       if (lane === -1) {
         lane = laneEnd.length
         laneEnd.push(fim)
       } else laneEnd[lane] = fim
-      lanes.set(a.id, lane)
+
+      lanes.set(a.id, { lane, total: 1 })
+      grupo.push(a.id)
+      grupoFim = Math.max(grupoFim, fim)
     }
-    const laneCount = Math.max(1, laneEnd.length)
-    return { doDia, lanes, laneCount }
+    if (grupo.length > 0) fecharGrupo()
+
+    return { doDia, lanes }
   }
 
   const nowKey = now ? localDateKey(now, props.timezone) : null
@@ -164,7 +189,7 @@ export function AgendaGrid(props: AgendaGridProps) {
         </div>
 
         {props.columns.map((col) => {
-          const { doDia, lanes, laneCount } = layout(col)
+          const { doDia, lanes } = layout(col)
           const blocos = props.availability.filter(
             (b) =>
               b.active &&
@@ -224,7 +249,7 @@ export function AgendaGrid(props: AgendaGridProps) {
               {doDia.map((a) => {
                 const ini = localMinutes(a.startsAt, props.timezone)
                 const fim = localMinutes(a.endsAt, props.timezone)
-                const lane = lanes.get(a.id) ?? 0
+                const faixa = lanes.get(a.id) ?? { lane: 0, total: 1 }
                 const encaixe = props.overlapping.has(a.id)
                 const fora = props.outside.has(a.id)
 
@@ -271,8 +296,8 @@ export function AgendaGrid(props: AgendaGridProps) {
                     style={{
                       top: toTop(ini) + 1,
                       height: altura,
-                      left: `calc(${(lane / laneCount) * 100}% + 2px)`,
-                      width: `calc(${(1 / laneCount) * 100}% - 4px)`,
+                      left: `calc(${(faixa.lane / faixa.total) * 100}% + 2px)`,
+                      width: `calc(${(1 / faixa.total) * 100}% - 4px)`,
                     }}
                     /*
                      * O bloco corta o que nao cabe, entao o conteudo completo
