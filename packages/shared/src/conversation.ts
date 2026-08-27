@@ -219,32 +219,85 @@ const instantSchema = z
   .string()
   .datetime({ offset: true, message: 'Informe um instante ISO-8601 com fuso.' })
 
-/** v0.1 aceita SOMENTE canal manual — nao ha adaptador externo conectado. */
-export const createConversationSchema = z.object({
-  channel: z.literal('manual'),
-  contactPhoneE164: phoneE164Schema.nullable().optional(),
-  contactName: z
-    .string()
-    .trim()
-    .max(120)
-    .transform((value) => (value === '' ? null : value))
-    .nullable()
-    .optional(),
-  patientId: z.uuid().nullable().optional(),
-  firstMessage: z
-    .object({
-      direction: messageDirectionSchema,
-      body: bodySchema,
-      occurredAt: instantSchema.optional(),
-    })
-    .optional(),
-})
+/**
+ * Tolerancia de relogio para `occurredAt`.
+ *
+ * O passado e legitimo: o modo manual existe para registrar o que aconteceu
+ * fora do sistema, e isso e sempre depois do fato. O futuro nao e — a fila
+ * ordena por `last_message_at`, e o banco o atualiza com `greatest()`, entao
+ * um instante a frente prende a conversa no topo e NENHUMA mensagem real
+ * posterior desfaz. Os cinco minutos existem so para o relogio do cliente
+ * estar adiantado, nao para conceder margem.
+ */
+export const OCCURRED_AT_FUTURE_TOLERANCE_MS = 5 * 60_000
 
-export const addMessageSchema = z.object({
-  direction: messageDirectionSchema,
-  body: bodySchema,
-  occurredAt: instantSchema.optional(),
-})
+const occurredAtSchema = instantSchema.refine(
+  (valor) => Date.parse(valor) <= Date.now() + OCCURRED_AT_FUTURE_TOLERANCE_MS,
+  { message: 'occurredAt nao pode estar no futuro.' },
+)
+
+/**
+ * Entrada de criacao de conversa MANUAL.
+ *
+ * O que NAO esta aqui e a parte importante: `channel`, `provider`, `status`,
+ * `assignedTo`, `version` e timestamps nao sao aceitos do cliente. Quem os
+ * define e o banco, dentro de `conversation_create_manual`. Um campo a mais
+ * neste schema seria um campo a mais que alguem pode forjar.
+ *
+ * `contactPhone` entra CRU: quem digita usa `(11) 98765-4321`. A normalizacao
+ * para E.164 acontece uma unica vez, em `toE164BR`, e nao aqui.
+ */
+export const registerConversationSchema = z
+  .object({
+    contactPhone: z.string().trim().max(40).nullish(),
+    contactName: z
+      .string()
+      .trim()
+      .max(120)
+      .transform((valor) => (valor === '' ? null : valor))
+      .nullish(),
+    patientId: z.uuid().nullish(),
+  })
+  /*
+   * ESTRITO: campo desconhecido e 400, nao descarte silencioso.
+   *
+   * Quem manda `channel: 'whatsapp'` acredita ter criado uma conversa de
+   * WhatsApp. Ignorar em silencio devolveria 201 e uma conversa manual, e a
+   * pessoa so descobriria a divergencia muito depois — talvez ao perceber que
+   * o paciente nunca recebeu nada. Recusar transforma um mal-entendido
+   * silencioso em erro imediato.
+   */
+  .strict()
+
+/**
+ * Entrada de REGISTRO de mensagem manual.
+ *
+ * "Registro", nao "envio": este caminho nao manda nada para lugar nenhum. Ele
+ * anota no sistema uma conversa que aconteceu por fora — telefone, balcao,
+ * WhatsApp pessoal. O nome do tipo carrega isso de proposito, para que ninguem
+ * leia a chamada e presuma entrega.
+ *
+ * Ausentes por construcao: `clinicId` (vem da conversa), `channel` e
+ * `provider` (carimbados por trigger), `deliveryStatus` (manual nunca finge
+ * entrega), `author*` e `recordedBy*` (carimbados a partir de auth.uid()).
+ */
+export const registerManualMessageSchema = z
+  .object({
+    direction: messageDirectionSchema,
+    body: bodySchema,
+    occurredAt: occurredAtSchema.nullish(),
+  })
+  /*
+   * ESTRITO pelo mesmo motivo, e aqui o risco e maior: um cliente que envia
+   * `deliveryStatus: 'delivered'` ou `authorUserId` esta tentando afirmar algo
+   * que nao lhe cabe. Descartar em silencio devolveria 201 e deixaria quem
+   * escreveu o cliente achando que a afirmacao valeu.
+   */
+  .strict()
+
+/** @deprecated Mantido enquanto o Bloco 3 nao reescreve o caminho de escrita. */
+export const createConversationSchema = registerConversationSchema
+export const addMessageSchema = registerManualMessageSchema
 
 /**
  * Toda mutacao de CONTROLE carrega a versao que a tela viu.
@@ -264,8 +317,35 @@ export const changeConversationStatusSchema = versioned.extend({
 export const linkPatientSchema = versioned.extend({ patientId: z.uuid() })
 export const unlinkPatientSchema = versioned
 
-export type CreateConversationInput = z.infer<typeof createConversationSchema>
-export type AddMessageInput = z.infer<typeof addMessageSchema>
+export type RegisterConversationInput = z.infer<typeof registerConversationSchema>
+export type RegisterManualMessageInput = z.infer<typeof registerManualMessageSchema>
+export type CreateConversationInput = RegisterConversationInput
+export type AddMessageInput = RegisterManualMessageInput
+
+/**
+ * Resposta da criacao manual.
+ *
+ * `created` distingue os dois caminhos SEM usar erro para isso: um telefone que
+ * ja tem thread nao e falha, e sim a resposta certa — a atendente quer abrir
+ * aquela conversa, nao ver um 409. O HTTP acompanha (201 x 200), mas quem
+ * programa a tela le este campo, nao o status.
+ */
+export interface RegisterConversationResult {
+  created: boolean
+  conversation: Conversation
+}
+
+/**
+ * Resposta do registro de mensagem.
+ *
+ * `conversation` vem junto porque uma mensagem inbound pode REABRIR a conversa:
+ * sem devolver o estado, a tela mostraria "resolvida" logo apos algo que a
+ * reabriu, e so descobriria no proximo refresh.
+ */
+export interface RegisterManualMessageResult {
+  message: Message
+  conversation: Conversation
+}
 export type TransferConversationInput = z.infer<typeof transferConversationSchema>
 export type ChangeConversationStatusInput = z.infer<typeof changeConversationStatusSchema>
 export type LinkPatientInput = z.infer<typeof linkPatientSchema>

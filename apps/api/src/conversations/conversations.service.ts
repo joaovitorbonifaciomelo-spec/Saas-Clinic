@@ -1,7 +1,19 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common'
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common'
 import {
   CONVERSATION_EVENT_METADATA_KEYS,
   needsReply,
+  toE164BR,
+  type Conversation,
+  type RegisterConversationInput,
+  type RegisterConversationResult,
+  type RegisterManualMessageInput,
+  type RegisterManualMessageResult,
   type ConversationDetail,
   type ConversationEventMetadata,
   type ConversationEventType,
@@ -177,6 +189,57 @@ function safeMetadata(raw: Record<string, unknown> | null): ConversationEventMet
     if (Object.hasOwn(raw, chave)) saida[chave] = raw[chave]
   }
   return saida
+}
+
+/**
+ * Forma que as funcoes do banco devolvem para uma mensagem.
+ *
+ * NAO e igual ao DTO `Message`, e por isso este tipo existe separado:
+ * `message_row_json` emite `authorName`/`recordedByName` (sem o sufixo
+ * `Snapshot`) e nao emite `provider` nem `providerMessageId`. Repassar o objeto
+ * cru faria o POST devolver uma forma diferente do GET para a MESMA entidade —
+ * e a tela teria que saber de onde o dado veio para saber como le-lo.
+ */
+interface MessageRpcJson {
+  id: string
+  clinicId: string
+  conversationId: string
+  channel: 'manual' | 'whatsapp'
+  direction: 'inbound' | 'outbound'
+  body: string
+  occurredAt: string
+  authorUserId: string | null
+  authorName: string | null
+  recordedByUserId: string | null
+  recordedByName: string | null
+  deliveryStatus: Message['deliveryStatus']
+  createdAt: string
+}
+
+function rpcToMessage(raw: MessageRpcJson): Message {
+  return {
+    id: raw.id,
+    clinicId: raw.clinicId,
+    conversationId: raw.conversationId,
+    channel: raw.channel,
+    direction: raw.direction,
+    body: raw.body,
+    occurredAt: raw.occurredAt,
+    authorUserId: raw.authorUserId,
+    authorNameSnapshot: raw.authorName,
+    recordedByUserId: raw.recordedByUserId,
+    recordedByNameSnapshot: raw.recordedByName,
+    /*
+     * Nulos por CONSTRAINT, nao por suposicao: `messages_channel_provider_check`
+     * exige provider nulo quando o canal e manual, e este caminho so cria
+     * mensagem manual. Nenhum registro manual carrega id de provedor porque
+     * nenhum provedor foi acionado.
+     */
+    provider: null,
+    providerMessageId: null,
+    deliveryStatus: raw.deliveryStatus,
+    createdAt: raw.createdAt,
+  }
 }
 
 const PREVIEW_MAX = 140
@@ -400,6 +463,139 @@ export class ConversationsService {
     }
   }
 
+  /* -------------------------------------------------------------------------
+     ESCRITA
+
+     A API nao faz INSERT. `authenticated` tem apenas SELECT nas tres tabelas,
+     e cada escrita entra por uma funcao controlada — a mesma barreira de que o
+     Bloco 1 ja dependia para ler com seguranca.
+  ------------------------------------------------------------------------- */
+
+  /**
+   * Registra uma conversa MANUAL.
+   *
+   * A clinica vem do header ja validado pelo guard, nunca do corpo. Canal,
+   * provider, status, responsavel, versao e timestamps sao decididos dentro de
+   * `conversation_create_manual` — nao existe parametro para forja-los.
+   */
+  async register(
+    clinicId: string,
+    input: RegisterConversationInput,
+  ): Promise<RegisterConversationResult> {
+    const telefone = normalizarTelefone(input.contactPhone)
+
+    const { data, error } = await this.supabase.rpc('conversation_create_manual', {
+      p_clinic_id: clinicId,
+      p_contact_phone_e164: telefone,
+      p_contact_name_snapshot: input.contactName ?? null,
+      p_patient_id: input.patientId ?? null,
+    })
+
+    if (error) throw mapPostgrestError(error)
+
+    const resultado = data as { outcome: string; conversation?: Conversation }
+
+    switch (resultado.outcome) {
+      case 'ok':
+        return { created: true, conversation: resultado.conversation! }
+      /*
+       * Telefone que ja tem thread NAO e erro. A atendente quer falar com
+       * aquela pessoa; devolver 409 obrigaria a tela a tratar uma falha para
+       * fazer exatamente o que o usuario pediu. Ela recebe a conversa que ja
+       * existe e abre.
+       */
+      case 'exists':
+        return { created: false, conversation: resultado.conversation! }
+      /*
+       * A clinica do header nao e do usuario. Na pratica o guard barrou antes;
+       * se chegou aqui, a resposta continua sendo a de recurso inexistente —
+       * nunca "existe, mas nao e sua".
+       */
+      case 'not_found':
+        throw new NotFoundException('Clinica nao encontrada.')
+      default:
+        throw new InternalServerErrorException('Erro ao processar a requisicao.')
+    }
+  }
+
+  /**
+   * REGISTRA uma mensagem manual. NAO ENVIA NADA.
+   *
+   * O modo manual anota no sistema algo que aconteceu por fora — telefone,
+   * balcao, WhatsApp pessoal. Nenhum provedor e acionado e nenhuma entrega e
+   * prometida; por isso `delivery_status` fica nulo, garantido por CHECK.
+   *
+   * A API tambem nao monta snapshot de autoria: quem carimba `author_*` e
+   * `recorded_by_*` e o trigger, a partir de `auth.uid()`. Nao ha caminho pelo
+   * qual o cliente informe quem falou.
+   */
+  async registerManualMessage(
+    clinicId: string,
+    conversationId: string,
+    input: RegisterManualMessageInput,
+  ): Promise<RegisterManualMessageResult> {
+    const { data, error } = await this.supabase.rpc('conversation_add_manual_message', {
+      p_conversation_id: conversationId,
+      p_direction: input.direction,
+      p_body: input.body,
+      p_occurred_at: input.occurredAt ?? null,
+    })
+
+    if (error) throw mapPostgrestError(error)
+
+    const resultado = data as { outcome: string; message?: MessageRpcJson }
+
+    switch (resultado.outcome) {
+      case 'ok':
+        break
+      /*
+       * Conversa inexistente e conversa de outro tenant chegam aqui como o
+       * MESMO outcome e saem como o mesmo 404 — a funcao no banco ja tomou
+       * esse cuidado, e a API nao o desfaz.
+       */
+      case 'not_found':
+        throw new NotFoundException('Conversa nao encontrada.')
+      /*
+       * Conversa de canal externo: a mensagem precisaria ser entregue de
+       * verdade, e este caminho nao entrega nada. A resposta nao diz de que
+       * canal se trata — para quem nao pode ver a conversa, isso ja seria
+       * informacao sobre ela.
+       */
+      case 'not_manual':
+        throw new BadRequestException('Esta conversa nao aceita registro manual.')
+      case 'invalid_body':
+        throw new BadRequestException('Mensagem vazia.')
+      default:
+        throw new InternalServerErrorException('Erro ao processar a requisicao.')
+    }
+
+    /*
+     * A conversa volta junto porque uma mensagem inbound PODE reabrir uma
+     * conversa resolvida, por trigger. Sem esse estado, a tela mostraria
+     * "resolvida" logo depois de algo que a reabriu, e so descobriria no
+     * proximo refresh.
+     *
+     * Custa uma consulta a mais no servidor e economiza um ida-e-volta HTTP do
+     * navegador pelo Funnel, que o Bloco 1 mediu em ~250ms de mediana. Nao e
+     * endpoint agregado: e o estado do proprio recurso que esta requisicao
+     * acabou de alterar.
+     */
+    const { data: conversa, error: erroConversa } = await this.supabase
+      .from('conversations')
+      .select(CONVERSATION_COLUMNS)
+      .eq('clinic_id', clinicId)
+      .eq('id', conversationId)
+      .maybeSingle()
+
+    if (erroConversa) throw mapPostgrestError(erroConversa)
+    if (!conversa) throw new NotFoundException('Conversa nao encontrada.')
+
+    return {
+      message: rpcToMessage(resultado.message!),
+      conversation: toDetailBase(conversa as unknown as ConversationRow),
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Auxiliares
   // ---------------------------------------------------------------------------
@@ -524,6 +720,28 @@ export class ConversationsService {
  * Digitos tambem sao casados contra o telefone sem formatacao, para que quem
  * digita "98765" ache "+5511987654321".
  */
+/**
+ * Telefone digitado -> E.164, com `toE164BR` como UNICA autoridade.
+ *
+ * Nao ha uma segunda regra aqui, de proposito. `toE164BR` devolve null sempre
+ * que nao da para ter certeza do pais, inclusive para numeros estrangeiros que
+ * ja chegam com "+": um "+1 415 555 0100" NAO pode virar "+5514155550100",
+ * porque o telefone e a identidade da thread e isso poria duas pessoas
+ * diferentes na mesma conversa. Preferimos recusar a adivinhar.
+ *
+ * CONSEQUENCIA ACEITA NA v0.1: numero estrangeiro nao e cadastravel por este
+ * caminho. E limitacao de produto conhecida, nao acidente.
+ */
+function normalizarTelefone(bruto: string | null | undefined): string | null {
+  if (bruto === null || bruto === undefined || bruto.trim() === '') return null
+
+  const normalizado = toE164BR(bruto)
+  if (normalizado === null) {
+    throw new BadRequestException('Telefone invalido. Informe um numero brasileiro valido.')
+  }
+  return normalizado
+}
+
 function buildSearchFilter(termo: string): string {
   const limpo = termo.replace(/[(),*\\]/g, ' ').trim()
   if (limpo.length === 0) return 'id.is.null'

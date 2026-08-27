@@ -810,15 +810,18 @@ describe('proveniencia de agendamento', () => {
  * `atendimento-api.test.ts`, junto do resto da API de leitura (Bloco 1):
  *
  *   - "404 de conversa de outro tenant e byte a byte igual ao de UUID
- *      inexistente"  -> isolamento > conversa de outro tenant e 404 IDENTICO...
+ *      inexistente"  -> atendimento-api: isolamento > conversa de outro tenant...
  *   - "X-Clinic-Id forjado nao devolve nenhum campo de dado do outro tenant"
- *                    -> isolamento > X-Clinic-Id forjado nao devolve dado...
+ *                    -> atendimento-api: isolamento > X-Clinic-Id forjado...
+ *   - "telefone ja existente em outra thread devolve erro explicado, nao 23505
+ *      cru"          -> atendimento-api-escrita: normalizacao de telefone >
+ *                       telefone repetido devolve 200 com a conversa EXISTENTE
  *
- * Os tres abaixo dependem dos endpoints de ESCRITA, que sao o Bloco 2. Ficam
+ * Os dois abaixo dependem dos endpoints de CONTROLE (assumir, transferir,
+ * mudar status), que carregam concorrencia otimistica e sao o Bloco 3. Ficam
  * como pendencia declarada em vez de sumirem da lista.
  */
-describe('nivel HTTP (escrita — Bloco 2)', () => {
+describe('nivel HTTP (controle — Bloco 3)', () => {
   it.todo('outcome conflict do RPC vira 409 com o estado atual')
   it.todo('outcome not_found do RPC vira 404, nunca 409')
-  it.todo('telefone ja existente em outra thread devolve erro explicado, nao 23505 cru')
 })

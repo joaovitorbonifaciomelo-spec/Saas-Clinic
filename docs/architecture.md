@@ -226,6 +226,171 @@ O `latest` do TypeScript é 7.0.2, mas `typescript-eslint@8.68.0` declara suport
 
 ---
 
+## 6.1 Atendimento: o modo manual NÃO envia nada
+
+**Regra permanente.** `POST /api/conversations/:id/messages` **registra** uma mensagem
+que aconteceu fora do sistema. Ele não envia, não entrega e não aciona provedor
+nenhum.
+
+O endpoint, o método do serviço e o tipo de entrada usam **register**, nunca
+**send**:
+
+| Camada | Nome |
+|---|---|
+| Rota | `POST /conversations/:id/messages` |
+| Controller | `registerMessage` |
+| Serviço | `registerManualMessage` |
+| Schema | `registerManualMessageSchema` |
+| Tipo | `RegisterManualMessageInput` / `RegisterManualMessageResult` |
+
+A escolha do nome não é preciosismo. Uma atendente que lê "enviar" acredita que
+o paciente recebeu a mensagem; se ela registrou uma conversa de telefone e a
+tela disser "enviada", a clínica passa a acreditar que respondeu alguém que
+nunca foi respondido. O banco reforça o mesmo fato por CHECK:
+`messages_manual_has_no_delivery` exige `delivery_status IS NULL` quando o canal é
+manual — não existe estado de entrega para inventar.
+
+**A UI precisa dizer isso na tela**, com a frase já aprovada: *"Modo manual —
+mensagens registradas aqui não são enviadas nem recebidas pelo WhatsApp."* Não
+em tooltip, não em documentação: na tela.
+
+### Autoria e registro são campos diferentes
+
+| Direção | Quem **disse** (`author`) | Quem **registrou** (`recordedBy`) |
+|---|---|---|
+| `inbound` | ninguém do lado da clínica → `null` | o usuário autenticado |
+| `outbound` | o usuário autenticado | o usuário autenticado |
+
+A API **não monta esses snapshots**. Quem carimba é o trigger
+`stamp_message_defaults`, a partir de `auth.uid()`. O cliente não tem por onde
+informar autoria: os campos não existem no schema de entrada, e a função do
+banco não tem parâmetro para eles. São duas barreiras independentes.
+
+### Criação manual: 201 e 200, nunca 409
+
+```
+POST /api/conversations
+  telefone novo       -> 201  { created: true,  conversation }
+  telefone já usado   -> 200  { created: false, conversation }
+```
+
+Telefone que já tem thread **não é erro**. A atendente quer falar com aquela
+pessoa; devolver 409 obrigaria a tela a tratar uma falha para fazer exatamente o
+que o usuário pediu. Ela recebe a conversa existente e abre. O status distingue
+os casos para quem lê HTTP; o campo `created` distingue para quem programa a
+tela.
+
+### `occurredAt`: passado sim, futuro não
+
+O passado é legítimo — o modo manual existe para registrar o que já aconteceu.
+O futuro não: a fila ordena por `last_message_at`, o banco o atualiza com
+`greatest()`, e um instante à frente prende a conversa no topo **sem que
+nenhuma mensagem real posterior desfaça**. A API aceita até
+`OCCURRED_AT_FUTURE_TOLERANCE_MS` (5 min) de folga, apenas para relógio de
+cliente adiantado.
+
+> ⚠️ **Esta proteção hoje existe SÓ na API.** `authenticated` tem EXECUTE em
+> `conversation_add_manual_message` e pode chamá-la direto, fora da API, com
+> `occurred_at` arbitrário. Verificado contra o Dev: aceito, e a conversa foi
+> para o topo da fila. Ver "Riscos conhecidos" abaixo.
+
+---
+
+## 6.2 Riscos conhecidos e decisões pendentes — Atendimento
+
+Três itens abertos, **nenhum resolvido nesta rodada**, todos aguardando decisão.
+Estão aqui para não virarem descoberta futura.
+
+### 1. `occurred_at` futuro é aceito pelo BANCO (não só pela API) — ALTO
+
+**Comportamento atual, verificado contra o Dev.** `authenticated` tem EXECUTE em
+`conversation_add_manual_message`. Chamando-a direto, sem passar pela API:
+
+```
+p_occurred_at = '2999-01-01'  ->  ACEITO
+messages.occurred_at          =  2999-01-01
+conversations.last_message_at =  2999-01-01
+topo da fila                  =  a conversa do futuro
+```
+
+**Por que importa.** A fila ordena por `last_message_at DESC`, e o trigger o
+atualiza com `greatest(last_message_at, new.occurred_at)`. Como `greatest()`
+nunca reduz, **nenhuma mensagem real posterior corrige o valor**: a conversa fica
+presa no topo permanentemente, e só um UPDATE administrativo desfaz.
+
+**Por que a API não basta.** A validação de 5 minutos vive no schema zod, que só
+roda no caminho HTTP. A RPC é executável diretamente por qualquer usuário
+autenticado — a mesma propriedade que torna o modelo de escrita seguro
+(o banco é a autoridade) faz da API um lugar insuficiente para esta regra.
+
+**Solução proposta** (migration, NÃO aplicada):
+
+```sql
+alter table public.messages
+  add constraint messages_occurred_at_not_future
+  check (occurred_at <= now() + interval '5 minutes');
+```
+
+Com uma ressalva a decidir junto: `now()` **não é imutável**, então um CHECK
+assim é aceito pelo PostgreSQL mas só é avaliado na escrita — o que é
+exatamente o que queremos aqui, e vale registrar que isso torna a constraint
+não-revalidável em `ALTER TABLE ... VALIDATE`. A alternativa é mover a
+verificação para o trigger `stamp_message_defaults`, que já roda em toda
+inserção e pode recusar com mensagem própria.
+
+**Impacto de não fazer:** um membro da clínica consegue fixar uma conversa no
+topo da fila da própria clínica. Não cruza tenant e não vaza dado — é
+sabotagem interna da ordenação, não brecha de isolamento.
+
+### 2. Idempotência de POST manual — MÉDIO, aceito na v0.1
+
+**Não há deduplicação, e isso é deliberado.** "Olá" registrado duas vezes pode
+ser um fato real: a pessoa ligou duas vezes. Deduplicar por conteúdo apagaria
+informação verdadeira, e o teste
+*"duas mensagens identicas continuam sendo duas mensagens"* fixa esse
+comportamento.
+
+O risco real é outro: **retry ou duplo clique**. Se a rede cair depois de o
+banco gravar e antes de a resposta chegar, o cliente reenvia e a mensagem entra
+duas vezes. Hoje nada impede.
+
+**Solução se decidirmos garantir de verdade:** `client_message_id` enviado pelo
+cliente e persistido com índice único por clínica — o mesmo formato do
+`messages_provider_dedup_key` que já existe para provedores externos. Exige
+migration.
+
+**Tradeoff.** A garantia só é real se o identificador for persistido; um
+`Idempotency-Key` guardado em memória do processo não sobrevive a restart nem
+funciona com mais de uma instância. Ou seja: ou migration, ou nada — não há
+meio-termo honesto.
+
+**Por que é aceitável até o frontend:** a consequência é uma linha duplicada
+numa thread, visível e corrigível por quem registrou; não há efeito externo
+porque **nada é enviado**. Quando o frontend existir, ele deve desabilitar o
+botão durante o POST, o que remove o caso comum. A decisão de persistir o
+identificador fica para quando houver canal externo de verdade — aí uma
+duplicata custa uma mensagem enviada ao paciente, e o cálculo muda.
+
+### 3. Nome do responsável vem da auditoria — MÉDIO, temporário
+
+`ConversationListItem.assignedToName` e `ConversationDetail.assignedToName` são
+resolvidos lendo o snapshot mais recente em `conversation_events`. Funciona,
+custa uma consulta por página, e **não é uma fonte adequada**: eventos são
+registro histórico do que aconteceu, não read model do estado atual. Quem nunca
+agiu na clínica não tem snapshot e sai com nome nulo.
+
+A causa é que a policy de `profiles` é `id = auth.uid()` e `clinic_members` não
+guarda nome — ninguém lê o nome de um colega.
+
+**Decisão pendente, antes do Bloco 3 / frontend:** escolher um read model seguro
+para membros da clínica. As opções na mesa são uma coluna
+`assigned_to_name_snapshot` em `conversations` (gravada no assign/transfer) ou
+uma view/policy que exponha nome de co-membros da mesma clínica. Ambas são
+mudança de banco. Enquanto isso, `assignedToIsMe` é o campo confiável e nunca
+depende do fallback.
+
+---
+
 ## 7. Como testar o isolamento entre clínicas
 
 ### Automatizado

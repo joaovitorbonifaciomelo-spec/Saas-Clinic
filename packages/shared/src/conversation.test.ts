@@ -9,11 +9,11 @@ import {
   CONVERSATION_STATUS_TRANSITIONS,
   MESSAGE_DIRECTIONS,
   MESSAGE_DIRECTION_LABELS,
-  addMessageSchema,
+  registerManualMessageSchema,
   assignConversationSchema,
   canTransitionConversation,
   changeConversationStatusSchema,
-  createConversationSchema,
+  registerConversationSchema,
   isUnclaimed,
   isValidChannelProviderPair,
   needsReply,
@@ -201,41 +201,51 @@ describe('sinais derivados', () => {
 describe('schemas de entrada', () => {
   const UUID = '3f2a9c1e-7b64-4d2f-9a1e-52c8d0b7e441'
 
-  it('v0.1 aceita somente canal manual', () => {
-    expect(createConversationSchema.safeParse({ channel: 'manual' }).success).toBe(true)
-    expect(createConversationSchema.safeParse({ channel: 'whatsapp' }).success).toBe(false)
+  it('conversa manual pode nascer sem nada preenchido', () => {
+    // Os tres campos sao opcionais: uma atendente pode abrir a conversa antes
+    // de saber quem e a pessoa do outro lado.
+    expect(registerConversationSchema.safeParse({}).success).toBe(true)
   })
 
-  it('conversa manual pode nascer sem telefone e sem paciente', () => {
-    const r = createConversationSchema.safeParse({ channel: 'manual' })
+  it('channel NAO e aceito — o canal nao e escolha do cliente', () => {
+    // Recusa em vez de descarte silencioso: quem manda 'whatsapp' acredita ter
+    // criado uma conversa de WhatsApp, e receber 201 com uma conversa manual
+    // esconderia o mal-entendido ate alguem notar que nada foi enviado.
+    expect(registerConversationSchema.safeParse({ channel: 'manual' }).success).toBe(false)
+    expect(registerConversationSchema.safeParse({ channel: 'whatsapp' }).success).toBe(false)
+  })
+
+  it('nenhum campo de controle passa', () => {
+    for (const campo of [
+      { provider: 'evolution' },
+      { status: 'resolved' },
+      { assignedTo: UUID },
+      { version: 9 },
+      { createdAt: '2020-01-01T00:00:00.000Z' },
+      { clinicId: UUID },
+    ]) {
+      expect(registerConversationSchema.safeParse(campo).success, JSON.stringify(campo)).toBe(false)
+    }
+  })
+
+  it('telefone entra CRU — a normalizacao e responsabilidade de toE164BR', () => {
+    // O schema so limita tamanho. Converter aqui criaria uma segunda regra de
+    // normalizacao, e duas regras divergem.
+    const r = registerConversationSchema.safeParse({ contactPhone: '(11) 98765-4321' })
     expect(r.success).toBe(true)
   })
 
-  it('recusa telefone fora de E.164 na criacao', () => {
-    const r = createConversationSchema.safeParse({
-      channel: 'manual',
-      contactPhoneE164: '11987654321',
-    })
-    expect(r.success).toBe(false)
-  })
-
-  it('nenhum payload aceita clinicId — o tenant vem do servidor', () => {
-    const comTenant = { channel: 'manual', clinicId: UUID } as Record<string, unknown>
-    const r = createConversationSchema.parse(comTenant)
-    expect(r).not.toHaveProperty('clinicId')
-  })
-
   it('mensagem exige corpo dentro do limite', () => {
-    expect(addMessageSchema.safeParse({ direction: 'inbound', body: 'oi' }).success).toBe(true)
-    expect(addMessageSchema.safeParse({ direction: 'inbound', body: '' }).success).toBe(false)
-    expect(addMessageSchema.safeParse({ direction: 'inbound', body: '   ' }).success).toBe(false)
+    expect(registerManualMessageSchema.safeParse({ direction: 'inbound', body: 'oi' }).success).toBe(true)
+    expect(registerManualMessageSchema.safeParse({ direction: 'inbound', body: '' }).success).toBe(false)
+    expect(registerManualMessageSchema.safeParse({ direction: 'inbound', body: '   ' }).success).toBe(false)
     expect(
-      addMessageSchema.safeParse({ direction: 'inbound', body: 'x'.repeat(4097) }).success,
+      registerManualMessageSchema.safeParse({ direction: 'inbound', body: 'x'.repeat(4097) }).success,
     ).toBe(false)
   })
 
   it('mensagem recusa direcao invalida', () => {
-    expect(addMessageSchema.safeParse({ direction: 'sideways', body: 'oi' }).success).toBe(false)
+    expect(registerManualMessageSchema.safeParse({ direction: 'sideways', body: 'oi' }).success).toBe(false)
   })
 
   it('toda mutacao de controle exige versao', () => {
