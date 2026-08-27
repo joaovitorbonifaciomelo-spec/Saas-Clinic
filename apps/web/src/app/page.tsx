@@ -40,36 +40,40 @@ export const metadata: Metadata = {
  * animacao. O unico peso sao duas imagens WebP do proprio sistema.
  */
 
+/*
+ * Uma frase por card, nao um paragrafo.
+ *
+ * O conteudo e o mesmo de antes — nenhum recurso entrou ou saiu — mas o texto
+ * longo fazia a secao parecer documentacao, e ninguem le documentacao numa
+ * pagina de apresentacao. O detalhe fica para a demonstracao.
+ */
 const RECURSOS = [
   {
     Icon: IconToday,
     titulo: 'Hoje',
     texto:
-      'A tela de abertura da recepção: quantas consultas o dia tem, quais já estão confirmadas, quais ainda aguardam resposta e o que vem a seguir.',
+      'Quantas consultas o dia tem, quais já estão confirmadas e o que vem a seguir.',
   },
   {
     Icon: IconCalendar,
     titulo: 'Agenda',
     texto:
-      'Grade por dia e por semana, com uma coluna por profissional. Duração vira altura, buraco na agenda vira buraco na tela, e encaixes aparecem lado a lado em vez de se cobrirem.',
+      'Grade por dia e semana, uma coluna por profissional. Encaixes aparecem lado a lado.',
   },
   {
     Icon: IconUsers,
     titulo: 'Pacientes',
-    texto:
-      'Cadastro com telefone, nascimento e convênio, a próxima consulta em destaque e o histórico completo de agendamentos de cada pessoa.',
+    texto: 'Telefone, convênio, próxima consulta e o histórico completo de cada pessoa.',
   },
   {
     Icon: IconStethoscope,
     titulo: 'Profissionais',
-    texto:
-      'Cada profissional com sua especialidade e suas faixas de atendimento por dia da semana — a agenda usa isso para mostrar o que está dentro e o que está fora do horário.',
+    texto: 'Especialidade e faixas de atendimento por dia da semana, usadas pela agenda.',
   },
   {
     Icon: IconTag,
     titulo: 'Serviços',
-    texto:
-      'Defina os serviços da clínica e a duração de cada um. Ao marcar, o horário de término já vem calculado.',
+    texto: 'A duração de cada serviço calcula o horário de término ao marcar.',
   },
 ] as const
 
@@ -105,7 +109,7 @@ export default function LandingPage() {
           <nav className="lp-nav-links" aria-label="Seções desta página">
             <a href="#recursos">Recursos</a>
             <a href="#como-funciona">Como funciona</a>
-            <a href="#seguranca">Isolamento de dados</a>
+            <a href="#seguranca">Proteção de dados</a>
           </nav>
 
           <div className="lp-nav-actions">
@@ -179,18 +183,23 @@ export default function LandingPage() {
                 </Link>
               </div>
 
+              {/* Mesma linguagem da secao de protecao de dados: a recepcao nao
+                  precisa saber onde a regra roda, precisa saber que os dados da
+                  clinica dela ficam com ela. */}
               <p className="lp-trust">
                 <IconShield />
-                Cada clínica enxerga apenas os próprios dados. O isolamento é aplicado no banco, não
-                na tela.
+                Os dados de cada clínica ficam separados e protegidos por controles de acesso.
               </p>
             </div>
 
             {/*
-              Captura real do sistema, nao mockup ilustrativo. As telas abaixo
-              sao exatamente Hoje (desktop) e Agenda (celular) como estao hoje,
-              com dados de exemplo. Um dashboard fictico bonito aqui viraria
-              decepcao na primeira demonstracao.
+              Captura real do sistema, nao mockup ilustrativo: a Agenda como ela
+              esta hoje, com dados de exemplo. Um dashboard fictico bonito aqui
+              viraria decepcao na primeira demonstracao.
+
+              A Agenda no lugar da tela Hoje porque ela e densa de cima a baixo.
+              A Hoje termina em area vazia, e dentro da moldura esse vazio virava
+              um retangulo branco enorme — o oposto do que a secao precisa.
             */}
             <div className="lp-hero-art" aria-hidden="false">
               <figure className="lp-frame">
@@ -200,8 +209,8 @@ export default function LandingPage() {
                   <span />
                 </div>
                 <img
-                  src="/produto-hoje.webp"
-                  alt="Tela Hoje do sistema: indicadores das consultas do dia, agenda do dia em ordem cronológica e lista de profissionais ativos."
+                  src="/produto-agenda.webp"
+                  alt="Tela Agenda do sistema: grade de horários com uma coluna por profissional, consultas posicionadas pela duração e status indicado por cor."
                   width={1520}
                   height={950}
                   fetchPriority="high"
@@ -235,10 +244,14 @@ export default function LandingPage() {
             <div className="lp-cards">
               {RECURSOS.map(({ Icon, titulo, texto }) => (
                 <article key={titulo} className="lp-card">
-                  <span className="lp-card-icon">
-                    <Icon size={18} />
-                  </span>
-                  <h3>{titulo}</h3>
+                  {/* Icone e titulo na mesma linha: o olho pega os cinco nomes
+                      numa varredura so, sem descer e subir a cada card. */}
+                  <div className="lp-card-top">
+                    <span className="lp-card-icon">
+                      <Icon size={17} />
+                    </span>
+                    <h3>{titulo}</h3>
+                  </div>
                   <p>{texto}</p>
                 </article>
               ))}
@@ -265,14 +278,25 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/*
+          Esta secao fala com quem administra uma clinica, nao com quem escreve
+          codigo. O mecanismo continua descrito — mas em uma linha discreta
+          embaixo de cada item, nao como titulo. Quem quiser conferir a
+          engenharia encontra; quem so quer saber se os dados estao separados le
+          a primeira frase e ja tem a resposta.
+
+          Nada de "seguranca total" ou "impossivel acessar": promessa absoluta
+          sobre seguranca e a mais facil de quebrar.
+        */}
         <section id="seguranca" className="lp-sec">
           <div className="lp-wrap lp-sec-inner">
             <div>
-              <span className="lp-eyebrow dark">Isolamento de dados</span>
-              <h2 className="lp-h2 dark">Uma clínica nunca alcança os dados de outra</h2>
+              <span className="lp-eyebrow dark">Proteção de dados</span>
+              <h2 className="lp-h2 dark">Os dados da sua clínica ficam só com a sua clínica</h2>
               <p className="lp-sec-lead">
-                O sistema é multi-clínica, e a separação não depende de a interface se lembrar de
-                filtrar. Ela é imposta pelo próprio banco de dados, uma camada abaixo da aplicação.
+                Os dados de cada clínica ficam separados e protegidos por controles de acesso. A
+                separação não depende de a tela lembrar de filtrar: ela é aplicada antes, no próprio
+                banco de dados.
               </p>
             </div>
 
@@ -280,31 +304,34 @@ export default function LandingPage() {
               <li>
                 <IconShield size={17} />
                 <div>
-                  <strong>Row Level Security no PostgreSQL</strong>
+                  <strong>Cada clínica vê apenas o que é dela</strong>
                   <span>
-                    Cada consulta roda com a identidade de quem está logado. Uma linha de outra
-                    clínica simplesmente não existe para aquela sessão.
+                    Pacientes, agenda e profissionais de uma clínica não aparecem para nenhuma
+                    outra.
                   </span>
+                  <span className="lp-sec-tech">Row Level Security no PostgreSQL</span>
                 </div>
               </li>
               <li>
                 <IconUsers size={17} />
                 <div>
-                  <strong>Vínculo verificado a cada requisição</strong>
+                  <strong>Só quem é da equipe entra</strong>
                   <span>
-                    A clínica ativa é confirmada contra os vínculos reais do usuário no servidor —
-                    nunca aceita apenas porque veio do navegador.
+                    O acesso é confirmado no servidor contra a lista real de pessoas ligadas à
+                    clínica, não pelo que o navegador informa.
                   </span>
+                  <span className="lp-sec-tech">Vínculo verificado a cada requisição</span>
                 </div>
               </li>
               <li>
                 <IconCheck size={17} />
                 <div>
-                  <strong>Testado, não presumido</strong>
+                  <strong>Conferido a cada atualização</strong>
                   <span>
-                    O isolamento entre clínicas é verificado por uma bateria de testes automatizados
-                    a cada mudança.
+                    Testes automáticos verificam essa separação sempre que o sistema muda — não
+                    ficamos no “deve estar funcionando”.
                   </span>
+                  <span className="lp-sec-tech">Bateria de testes de isolamento</span>
                 </div>
               </li>
             </ul>
@@ -334,7 +361,7 @@ export default function LandingPage() {
       <footer className="lp-foot">
         <div className="lp-wrap lp-foot-inner">
           <Wordmark tone="dark" />
-          <p>Produto em validação com clínicas piloto.</p>
+          <p>Produto em fase de validação.</p>
           <nav aria-label="Acesso">
             <Link href="/login">Entrar</Link>
             <Link href="/signup">Criar conta</Link>

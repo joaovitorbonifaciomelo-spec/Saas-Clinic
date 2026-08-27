@@ -1671,7 +1671,7 @@ tbody tr:hover {
 }
 
 .lp-h1 {
-  font-size: clamp(32px, 4.4vw, 50px);
+  font-size: clamp(31px, 3.9vw, 45px);
   line-height: 1.08;
   font-weight: 690;
   letter-spacing: -0.032em;
@@ -1693,11 +1693,11 @@ tbody tr:hover {
   color: #fff;
 }
 .lp-lead {
-  font-size: 16px;
-  line-height: 1.6;
+  font-size: 15.5px;
+  line-height: 1.58;
   color: var(--ink-2);
   max-width: 52ch;
-  margin: 18px 0 0;
+  margin: 14px 0 0;
 }
 .lp-sub {
   font-size: 15px;
@@ -1727,7 +1727,7 @@ tbody tr:hover {
   border: 1px solid var(--brand-line);
   border-radius: 999px;
   padding: 4px 12px;
-  margin-bottom: 22px;
+  margin-bottom: 18px;
 }
 .lp-btn-lg {
   font-size: 14.5px;
@@ -1786,17 +1786,19 @@ tbody tr:hover {
 /* --- hero --- */
 .lp-hero {
   background: var(--surface);
-  padding-bottom: 78px;
+  padding-bottom: 62px;
   /* A captura sangra para fora do container a direita: a tela do produto
      continua alem da borda em vez de terminar num retangulo centralizado. */
   overflow: hidden;
 }
 .lp-hero-inner {
   display: grid;
-  grid-template-columns: minmax(0, 470px) minmax(0, 1fr);
-  gap: 44px;
+  /* Coluna de texto mais estreita e captura mais larga: o produto e o argumento
+     mais forte da pagina, e antes ele ocupava menos espaco que a propria copy. */
+  grid-template-columns: minmax(0, 430px) minmax(0, 1fr);
+  gap: 40px;
   align-items: center;
-  padding-top: 66px;
+  padding-top: 42px;
 }
 .lp-hero-copy {
   min-width: 0;
@@ -1804,10 +1806,10 @@ tbody tr:hover {
 .lp-mini {
   list-style: none;
   padding: 0;
-  margin: 30px 0 0;
+  margin: 24px 0 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 18px 26px;
+  gap: 15px 22px;
   max-width: 560px;
 }
 .lp-mini li {
@@ -1833,7 +1835,7 @@ tbody tr:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  margin-top: 32px;
+  margin-top: 26px;
 }
 .lp-trust {
   display: flex;
@@ -1841,8 +1843,8 @@ tbody tr:hover {
   gap: 8px;
   font-size: 12.5px;
   color: var(--muted);
-  margin: 18px 0 0;
-  max-width: 52ch;
+  margin: 16px 0 0;
+  max-width: 46ch;
 }
 .lp-trust svg {
   color: var(--muted);
@@ -1853,7 +1855,7 @@ tbody tr:hover {
 .lp-hero-art {
   position: relative;
   min-width: 0;
-  margin-right: -72px;
+  margin-right: -40px;
 }
 .lp-frame {
   margin: 0;
@@ -1885,10 +1887,16 @@ tbody tr:hover {
   height: auto;
 }
 .lp-phone {
+  /*
+   * Ancorado na borda do container, nao na da moldura: a moldura sangra 104px
+   * para fora e o valor da sangria varia com a largura da janela, entao
+   * qualquer offset medido a partir dela cortava o celular ao meio em alguma
+   * largura. Compensando a sangria, ele fica inteiro em todas.
+   */
   position: absolute;
-  right: -26px;
-  bottom: -44px;
-  width: 152px;
+  right: -24px;
+  bottom: -46px;
+  width: 148px;
   margin: 0;
   padding: 5px;
   background: #0b1220;
@@ -1935,29 +1943,41 @@ tbody tr:hover {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow);
-  padding: 22px;
+  padding: 20px;
+}
+/*
+ * Hierarquia em duas camadas so: a linha do titulo e o que se le na varredura,
+ * a descricao e o que se le se o titulo interessou. Icone e titulo juntos
+ * porque separados obrigavam o olho a descer e subir cinco vezes.
+ */
+.lp-card-top {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 10px;
 }
 .lp-card-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
+  flex: none;
   border-radius: var(--r);
   background: var(--brand-soft);
   border: 1px solid var(--brand-line);
   color: var(--brand);
-  margin-bottom: 14px;
 }
 .lp-card h3 {
-  font-size: 15.5px;
-  font-weight: 640;
-  letter-spacing: -0.01em;
-  margin: 0 0 7px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  margin: 0;
 }
 .lp-card p {
   font-size: 13.5px;
-  line-height: 1.6;
+  line-height: 1.55;
   color: var(--muted);
   margin: 0;
 }
@@ -2049,6 +2069,17 @@ tbody tr:hover {
   font-size: 13px;
   line-height: 1.6;
   color: #93a5c0;
+}
+/* O mecanismo continua na pagina, mas em terceiro plano: quem administra a
+   clinica nao precisa dele para decidir, e quem avalia a engenharia acha. */
+.lp-sec-tech {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid #1e2b45;
+  font-size: 11px;
+  font-weight: 560;
+  letter-spacing: 0.03em;
+  color: #6a7c99;
 }
 
 /* --- cta final --- */
@@ -2295,6 +2326,15 @@ tbody tr:hover {
 /* =============================================================================
    RESPONSIVO DAS TELAS PUBLICAS
    ============================================================================= */
+@media (max-width: 1280px) {
+  .lp-hero-art {
+    margin-right: 0;
+  }
+  .lp-phone {
+    right: 6px;
+  }
+}
+
 @media (max-width: 1080px) {
   .lp-hero-inner {
     grid-template-columns: 1fr;
