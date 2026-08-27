@@ -9,6 +9,7 @@ import { apiFetch } from '../../../lib/api'
 import { getActiveSession } from '../../session'
 import { localDateKey, rangeFor } from './agenda-time'
 import { AgendaView } from './agenda-view'
+import { PerfMeta } from '../../ui/perf-meta'
 
 export const dynamic = 'force-dynamic'
 
@@ -73,6 +74,7 @@ export default async function AgendaPage({ searchParams }: AgendaPageProps) {
 
   return (
     <div className="content">
+      <PerfMeta />
       {/* Titulo, toolbar e grade vivem no AgendaView: navegar entre datas e
           alternar Dia/Semana e interacao de cliente, e manter o cabecalho junto
           evita um segundo lugar para consertar quando o layout mudar. */}

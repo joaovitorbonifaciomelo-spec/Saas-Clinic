@@ -6,7 +6,8 @@ import {
   type Patient,
 } from '@clinicas/shared'
 import { ApiError, apiFetch } from '../../../lib/api'
-import { getActiveSession } from '../../session'
+import { loadForActiveClinic } from '../../session'
+import { PerfMeta } from '../../ui/perf-meta'
 import { formatDateLabel, localDateKey, localTimeLabel } from '../agenda/agenda-time'
 import { formatPhone, initials } from '../../ui/format'
 import { IconCake, IconEdit, IconPhone, IconPlus, IconShield } from '../../ui/icons'
@@ -28,10 +29,6 @@ interface PageProps {
  */
 export default async function PatientsPage({ searchParams }: PageProps) {
   const params = await searchParams
-  const { activeClinic } = await getActiveSession()
-  const clinicId = activeClinic.clinicId
-  const timezone = activeClinic.clinicTimezone
-
   /*
    * O historico so espera a lista quando NAO ha paciente na URL.
    *
@@ -42,7 +39,7 @@ export default async function PatientsPage({ searchParams }: PageProps) {
    *
    * Vale a onda economizada: a mediana do Funnel e 246ms, mas o p90 e 853ms.
    */
-  const historicoDe = (patientId: string) =>
+  const historicoDe = (clinicId: string, patientId: string) =>
     apiFetch<AppointmentWithRelations[]>(`/api/appointments?patientId=${patientId}`, {
       clinicId,
     }).catch((error: unknown) => {
@@ -51,10 +48,15 @@ export default async function PatientsPage({ searchParams }: PageProps) {
       return [] as AppointmentWithRelations[]
     })
 
-  const [patients, historicoPreCarregado] = await Promise.all([
-    apiFetch<Patient[]>('/api/patients', { clinicId }),
-    params.p ? historicoDe(params.p) : Promise.resolve(null),
-  ])
+  const { session, data } = await loadForActiveClinic(async (clinicId) => {
+    const [patients, historicoPreCarregado] = await Promise.all([
+      apiFetch<Patient[]>('/api/patients', { clinicId }),
+      params.p ? historicoDe(clinicId, params.p) : Promise.resolve(null),
+    ])
+    return { clinicId, patients, historicoPreCarregado }
+  })
+  const { clinicId, patients, historicoPreCarregado } = data
+  const timezone = session.activeClinic.clinicTimezone
 
   // Sem selecao explicita, abre o primeiro: painel vazio nao ajuda ninguem.
   const selectedId = params.p ?? patients[0]?.id
@@ -70,7 +72,7 @@ export default async function PatientsPage({ searchParams }: PageProps) {
     appointments =
       historicoPreCarregado !== null && selected.id === params.p
         ? historicoPreCarregado
-        : await historicoDe(selected.id)
+        : await historicoDe(clinicId, selected.id)
   }
 
   const proxima = selectNextAppointment(appointments)
@@ -78,6 +80,7 @@ export default async function PatientsPage({ searchParams }: PageProps) {
 
   return (
     <div className="content master-detail">
+      <PerfMeta />
       <PatientList patients={patients} selectedId={selected?.id} query={params.q ?? ''} />
 
       {!selected ? (

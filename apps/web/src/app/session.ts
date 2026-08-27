@@ -1,7 +1,13 @@
 import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import type { ClinicMembership, UserProfile } from '@clinicas/shared'
-import { ApiError, fetchMe, readActiveClinicCookie, resolveActiveClinicId } from '../lib/api'
+import {
+  ApiError,
+  fetchMe,
+  readActiveClinicCookie,
+  readClinicHint,
+  resolveActiveClinicId,
+} from '../lib/api'
 
 export interface ActiveSession {
   profile: UserProfile
@@ -64,3 +70,55 @@ export async function requireActiveSession(): Promise<ActiveSession> {
  * entao colocar o nome da clinica na topbar sai de graca.
  */
 export const getActiveSession = cache(requireActiveSession)
+
+/**
+ * Carrega dados da clinica EM PARALELO com a resolucao da sessao.
+ *
+ * O problema: toda tela esperava /api/me terminar so para saber qual clinic_id
+ * mandar no cabecalho das proximas chamadas. Duas idas e voltas em serie pelo
+ * Funnel, ~250ms cada, em toda navegacao.
+ *
+ * A ideia: o cookie ja sabe (quase sempre) qual e a clinica. Entao disparamos
+ * `carregar(palpite)` junto com /api/me e, quando a sessao chega, so
+ * APROVEITAMOS o resultado se a clinica validada for exatamente a do palpite.
+ *
+ * POR QUE ISSO NAO ALARGA ACESSO, em duas travas independentes:
+ *
+ *  1. A chamada especulativa leva o JWT do proprio usuario. Se o palpite
+ *     apontar para outra clinica, o ClinicMembershipGuard nega e o RLS nao
+ *     devolveria linha nenhuma de qualquer forma. O cookie nao e credencial.
+ *
+ *  2. Mesmo que a camada 1 falhasse, o resultado especulativo so e usado
+ *     quando `palpite === clinica validada pelo servidor`. Um cookie adulterado
+ *     nao passa nem por engano: o dado seria descartado antes de virar tela.
+ *
+ * Cookie ausente, malformado, obsoleto ou de clinica sem vinculo caem todos no
+ * mesmo lugar: o caminho normal, com a clinica que /api/me confirmou.
+ */
+export async function loadForActiveClinic<T>(
+  carregar: (clinicId: string) => Promise<T>,
+): Promise<{ session: ActiveSession; data: T; hintUsed: boolean }> {
+  const palpite = await readClinicHint()
+  const sessaoPromise = getActiveSession()
+
+  /*
+   * O `.then` com dois ramos anexa o tratamento de rejeicao NA HORA. Sem isso,
+   * um palpite obsoleto viraria unhandled rejection antes de alguem dar await.
+   */
+  const especulativo = palpite
+    ? carregar(palpite).then(
+        (valor) => ({ ok: true as const, valor }),
+        () => ({ ok: false as const, valor: undefined }),
+      )
+    : null
+
+  const session = await sessaoPromise
+  const clinicId = session.activeClinic.clinicId
+
+  if (especulativo && palpite === clinicId) {
+    const r = await especulativo
+    if (r.ok) return { session, data: r.valor as T, hintUsed: true }
+  }
+
+  return { session, data: await carregar(clinicId), hintUsed: false }
+}

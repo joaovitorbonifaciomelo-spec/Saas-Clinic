@@ -17,6 +17,30 @@ function isPublicPath(pathname: string): boolean {
 }
 
 /**
+ * Identidade e contador desta instancia do proxy.
+ *
+ * Servem para distinguir invocacao fria de quente sem depender de header
+ * proprietario da plataforma: numa instancia recem-criada o contador vale 1.
+ */
+const PROXY_INSTANCE = Math.random().toString(36).slice(2, 6)
+let PROXY_INVOCATIONS = 0
+
+/**
+ * Anexa a medicao do proxy na resposta.
+ *
+ * SO DURACAO E CONTADOR. O `desc` carrega um identificador aleatorio de
+ * instancia e o numero da invocacao — nada derivado de usuario, sessao,
+ * clinica ou token.
+ */
+function comTiming(response: NextResponse, authMs: number): NextResponse {
+  response.headers.set(
+    'Server-Timing',
+    `proxyauth;dur=${authMs};desc="${PROXY_INSTANCE}-inv${PROXY_INVOCATIONS}"`,
+  )
+  return response
+}
+
+/**
  * Refresh da sessao + protecao de rota.
  *
  * O padrao do @supabase/ssr exige que a MESMA resposta usada no setAll seja a
@@ -52,10 +76,20 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     },
   )
 
-  // getUser() e nao getSession(): valida o token contra o servidor de auth.
+  /*
+   * getUser() e nao getSession(): valida o token contra o servidor de auth.
+   *
+   * Cronometrado porque e uma ida a rede em TODA requisicao, inclusive nas RSC,
+   * e precisamos saber quanto dela esta no ~1s extra que aparece em metade das
+   * navegacoes. Sai so a duracao e um contador de invocacoes desta instancia —
+   * nenhum dado de usuario, sessao ou clinica.
+   */
+  const tAuth = Date.now()
   const {
     data: { user },
   } = await supabase.auth.getUser()
+  const authMs = Date.now() - tAuth
+  PROXY_INVOCATIONS += 1
 
   const { pathname } = request.nextUrl
 
@@ -63,14 +97,14 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/login'
     redirectUrl.searchParams.set('next', pathname)
-    return NextResponse.redirect(redirectUrl)
+    return comTiming(NextResponse.redirect(redirectUrl), authMs)
   }
 
   if (user && (pathname === '/login' || pathname === '/signup')) {
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/dashboard'
     redirectUrl.search = ''
-    return NextResponse.redirect(redirectUrl)
+    return comTiming(NextResponse.redirect(redirectUrl), authMs)
   }
 
   return response

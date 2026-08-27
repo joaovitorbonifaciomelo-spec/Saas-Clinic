@@ -1,14 +1,12 @@
 import type { AvailabilityBlock, Professional } from '@clinicas/shared'
 import { apiFetch } from '../../../../lib/api'
-import { getActiveSession } from '../../../session'
+import { loadForActiveClinic } from '../../../session'
+import { PerfMeta } from '../../../ui/perf-meta'
 import { ProfessionalsManager } from './professionals-manager'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ProfessionalsPage() {
-  const { activeClinic } = await getActiveSession()
-  const clinicId = activeClinic.clinicId
-
   /*
    * Duas chamadas em paralelo, nao 1 + N em serie.
    *
@@ -22,12 +20,16 @@ export default async function ProfessionalsPage() {
    * existia (a agenda usa desde o checkpoint 1). O agrupamento por profissional,
    * que era o unico motivo do laco, sai de graca aqui.
    */
-  const [professionals, availability] = await Promise.all([
-    apiFetch<Professional[]>('/api/professionals', { clinicId }),
-    apiFetch<AvailabilityBlock[]>('/api/professionals/availability', { clinicId }).catch(
-      () => [] as AvailabilityBlock[],
-    ),
-  ])
+  const { data } = await loadForActiveClinic(async (clinicId) => {
+    const [professionals, availability] = await Promise.all([
+      apiFetch<Professional[]>('/api/professionals', { clinicId }),
+      apiFetch<AvailabilityBlock[]>('/api/professionals/availability', { clinicId }).catch(
+        () => [] as AvailabilityBlock[],
+      ),
+    ])
+    return { professionals, availability }
+  })
+  const { professionals, availability } = data
 
   const availabilityByProfessional: Record<string, AvailabilityBlock[]> = {}
   for (const professional of professionals) availabilityByProfessional[professional.id] = []
@@ -36,9 +38,12 @@ export default async function ProfessionalsPage() {
   }
 
   return (
-    <ProfessionalsManager
-      professionals={professionals}
-      availabilityByProfessional={availabilityByProfessional}
-    />
+    <>
+      <ProfessionalsManager
+        professionals={professionals}
+        availabilityByProfessional={availabilityByProfessional}
+      />
+      <PerfMeta />
+    </>
   )
 }

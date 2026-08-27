@@ -1,15 +1,21 @@
 import type { Service } from '@clinicas/shared'
 import { apiFetch } from '../../../../lib/api'
-import { getActiveSession } from '../../../session'
+import { loadForActiveClinic } from '../../../session'
+import { PerfMeta } from '../../../ui/perf-meta'
 import { ServicesManager } from './services-manager'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ServicesPage() {
-  const { activeClinic } = await getActiveSession()
-  const services = await apiFetch<Service[]>('/api/services', {
-    clinicId: activeClinic.clinicId,
-  })
+  // Uma onda: /api/me e a lista de servicos saem juntos.
+  const { data: services } = await loadForActiveClinic((clinicId) =>
+    apiFetch<Service[]>('/api/services', { clinicId }),
+  )
 
-  return <ServicesManager services={services} />
+  return (
+    <>
+      <ServicesManager services={services} />
+      <PerfMeta />
+    </>
+  )
 }

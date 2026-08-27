@@ -1,5 +1,6 @@
 import { cache } from 'react'
 import { cookies } from 'next/headers'
+import { timed } from './perf'
 import { CLINIC_HEADER, type MeResponse } from '@clinicas/shared'
 import { getPublicEnv } from './env'
 import { createSupabaseServerClient } from './supabase/server'
@@ -10,6 +11,42 @@ import { createSupabaseServerClient } from './supabase/server'
  * revalidado contra as memberships a cada request em resolveActiveClinicId().
  */
 export const ACTIVE_CLINIC_COOKIE = 'active_clinic_id'
+
+/** Formato de UUID. Checagem de FORMA — nao tem nada a ver com autorizacao. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Palpite de clinica ativa vindo do cookie.
+ *
+ * DEVOLVE UM PALPITE, NAO UMA PERMISSAO. Serve unicamente para comecar as
+ * buscas de dados em paralelo com /api/me em vez de depois dele. Valor ausente
+ * ou fora do formato vira `undefined` e o fluxo segue pelo caminho normal.
+ *
+ * Quem autoriza continua sendo, em tres camadas independentes: o JWT do
+ * usuario em toda chamada, o ClinicMembershipGuard na API e o RLS no Postgres.
+ * Nenhuma delas olha para este cookie.
+ */
+export async function readClinicHint(): Promise<string | undefined> {
+  const raw = await readActiveClinicCookie()
+  return raw && UUID_RE.test(raw) ? raw : undefined
+}
+
+/**
+ * Grava o palpite. So pode ser chamado de Server Action — o Next proibe
+ * escrever cookie durante render, e com razao: escrever durante render torna a
+ * resposta dependente de efeito colateral.
+ */
+export async function writeClinicHint(clinicId: string): Promise<void> {
+  if (!UUID_RE.test(clinicId)) return
+  const store = await cookies()
+  store.set(ACTIVE_CLINIC_COOKIE, clinicId, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30,
+  })
+}
 
 export class ApiError extends Error {
   constructor(
@@ -63,12 +100,18 @@ export async function apiFetch<T>(path: string, options: ApiRequestOptions = {})
   }
   if (options.clinicId) headers[CLINIC_HEADER] = options.clinicId
 
-  const response = await fetch(`${getPublicEnv().NEXT_PUBLIC_API_URL}${path}`, {
-    method: options.method ?? 'GET',
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    cache: 'no-store',
-  })
+  // O nome da marca vem do caminho SEM query string e sem ids: /api/me,
+  // /api/patients. Nunca entra identificador de recurso na medicao.
+  const marca = path.split('?')[0]!.replace(/\/[0-9a-f-]{36}/gi, '/:id')
+
+  const response = await timed(marca, () =>
+    fetch(`${getPublicEnv().NEXT_PUBLIC_API_URL}${path}`, {
+      method: options.method ?? 'GET',
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      cache: 'no-store',
+    }),
+  )
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { message?: string } | null

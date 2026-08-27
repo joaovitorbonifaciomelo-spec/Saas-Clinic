@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { signInSchema, signUpSchema, createClinicSchema } from '@clinicas/shared'
 import { createSupabaseServerClient } from '../lib/supabase/server'
-import { apiFetch, ACTIVE_CLINIC_COOKIE } from '../lib/api'
+import { apiFetch, fetchMe, writeClinicHint, ACTIVE_CLINIC_COOKIE } from '../lib/api'
 import { cookies } from 'next/headers'
 
 export interface ActionState {
@@ -50,6 +50,23 @@ export async function signInAction(_prev: ActionState, formData: FormData): Prom
 
   if (error) return { error: 'E-mail ou senha invalidos.' }
 
+  /*
+   * Grava o palpite de clinica ativa aqui, e nao durante o render, porque o
+   * Next so permite escrever cookie em Server Action. Este e um dos dois
+   * momentos em que a clinica ativa e estabelecida — o outro e o onboarding.
+   *
+   * Falha silenciosa de proposito: o cookie e otimizacao. Se /api/me nao
+   * responder agora, o login tem que funcionar do mesmo jeito e a proxima
+   * navegacao simplesmente segue pelo caminho normal, sem palpite.
+   */
+  try {
+    const me = await fetchMe()
+    const primeira = me.memberships[0]?.clinicId
+    if (primeira) await writeClinicHint(primeira)
+  } catch {
+    // sem palpite; nada quebra
+  }
+
   redirect('/dashboard')
 }
 
@@ -76,7 +93,12 @@ export async function createClinicAction(
   }
 
   try {
-    await apiFetch('/api/clinics', { method: 'POST', body: parsed.data })
+    const clinica = await apiFetch<{ id: string }>('/api/clinics', {
+      method: 'POST',
+      body: parsed.data,
+    })
+    // A clinica recem-criada e, necessariamente, a ativa a partir de agora.
+    await writeClinicHint(clinica.id)
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Falha ao criar clinica.' }
   }

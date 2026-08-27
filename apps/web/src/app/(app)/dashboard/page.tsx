@@ -20,6 +20,7 @@ import {
   IconTag,
   IconUsers,
 } from '../../ui/icons'
+import { PerfMeta } from '../../ui/perf-meta'
 import { TodayTimeline } from './today-timeline'
 
 export const dynamic = 'force-dynamic'
@@ -72,6 +73,7 @@ export default async function TodayPage() {
 
   return (
     <div className="content">
+      <PerfMeta />
       <div className="page-head">
         <div>
           <h1>Hoje</h1>
