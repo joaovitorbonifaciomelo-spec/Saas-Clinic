@@ -11,6 +11,9 @@ importers:
       '@clinicas/config':
         specifier: workspace:*
         version: link:packages/config
+      '@electric-sql/pglite':
+        specifier: ^0.5.7
+        version: 0.5.7
       '@supabase/supabase-js':
         specifier: 2.112.4
         version: 2.112.4
@@ -209,6 +212,9 @@ packages:
     engines: {bun: '>=1', deno: '>=2.7.10', node: '>=16'}
     peerDependencies:
       '@noble/ciphers': ^1.0.0
+
+  '@electric-sql/pglite@0.5.7':
+    resolution: {integrity: sha512-6WBks0NFO6YUhGP03mCNkbJuVFWwrZPrzZ/vsnAPnsCD28pybdZ+yoTrlLlWFoZst3kdaju5pxIslV/jrr36nQ==}
 
   '@emnapi/runtime@1.11.3':
     resolution: {integrity: sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA==}
@@ -2767,6 +2773,8 @@ snapshots:
   '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
     dependencies:
       '@noble/ciphers': 1.3.0
+
+  '@electric-sql/pglite@0.5.7': {}
 
   '@emnapi/runtime@1.11.3':
     dependencies:

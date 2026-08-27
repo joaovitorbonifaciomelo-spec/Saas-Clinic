@@ -31,10 +31,12 @@ drop trigger if exists conversation_events_stamp_actor          on public.conver
 drop trigger if exists conversation_events_prevent_clinic_id_change
   on public.conversation_events;
 
-drop trigger if exists messages_stamp_channel               on public.messages;
+drop trigger if exists messages_stamp_defaults              on public.messages;
 drop trigger if exists messages_after_insert                on public.messages;
 drop trigger if exists messages_prevent_clinic_id_change    on public.messages;
 
+drop trigger if exists conversations_after_insert             on public.conversations;
+drop trigger if exists conversations_enforce_identity          on public.conversations;
 drop trigger if exists z_conversations_bump_version           on public.conversations;
 drop trigger if exists conversations_enforce_status_transition on public.conversations;
 drop trigger if exists conversations_prevent_clinic_id_change  on public.conversations;
@@ -43,10 +45,23 @@ drop trigger if exists conversations_set_updated_at            on public.convers
 drop function if exists public.validate_conversation_event_appointment();
 drop function if exists public.stamp_conversation_event_actor();
 drop function if exists public.current_actor_snapshot(uuid);
-drop function if exists public.stamp_message_channel();
+drop function if exists public.stamp_message_defaults();
 drop function if exists public.on_message_inserted();
 drop function if exists public.bump_conversation_version();
 drop function if exists public.enforce_conversation_status_transition();
+drop function if exists public.enforce_conversation_identity();
+drop function if exists public.on_conversation_created();
+
+-- Funcoes de controle. Assinatura completa: sao sobrecarregaveis por engano.
+drop function if exists public.conversation_log_appointment(uuid, uuid);
+drop function if exists public.conversation_unlink_patient(uuid, integer);
+drop function if exists public.conversation_link_patient(uuid, integer, uuid);
+drop function if exists public.conversation_set_status(uuid, integer, public.conversation_status);
+drop function if exists public.conversation_release(uuid, integer);
+drop function if exists public.conversation_transfer(uuid, integer, uuid);
+drop function if exists public.conversation_assign(uuid, integer);
+drop function if exists public.conversation_conflict(uuid);
+drop function if exists public.conversation_row_json(public.conversations);
 
 -- 2) Tabelas -----------------------------------------------------------------
 --    Ordem inversa da criacao: os filhos referenciam conversations por FK

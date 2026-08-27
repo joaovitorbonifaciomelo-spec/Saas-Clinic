@@ -26,10 +26,12 @@
     "db:push:raw": "supabase db push",
     "db:diff": "supabase db diff",
     "test:hint": "pnpm build:shared && vitest run --project hint",
-    "test:atendimento": "pnpm build:shared && vitest run --project atendimento"
+    "test:atendimento": "pnpm build:shared && vitest run --project atendimento",
+    "verify:migrations": "node scripts/verify-migrations.mjs"
   },
   "devDependencies": {
     "@clinicas/config": "workspace:*",
+    "@electric-sql/pglite": "^0.5.7",
     "@supabase/supabase-js": "2.112.4",
     "@types/node": "24.13.3",
     "@types/pg": "8.23.1",

@@ -448,10 +448,17 @@ create trigger z_conversations_bump_version
 -- de escrita, e a reabertura nao pode depender de qual codigo chamou. Uma
 -- resposta chegando num domingo nao pode ficar invisivel ate alguem abrir a
 -- conversa encerrada.
+--
+-- SECURITY DEFINER porque `authenticated` deixou de ter UPDATE em conversations
+-- (ver migration de grants): a atividade e efeito da mensagem, nao uma escrita
+-- que o cliente escolhe fazer. A linha so chega aqui depois de o RLS de
+-- messages ter autorizado a insercao, e o filtro por clinic_id continua
+-- explicito.
 -- =============================================================================
 create or replace function public.on_message_inserted()
 returns trigger
 language plpgsql
+security definer
 set search_path = ''
 as $$
 declare
@@ -481,11 +488,18 @@ begin
   -- Evento do sistema: actor nulo, motivo declarado. Os campos de autoria ficam
   -- nulos porque nao ha pessoa por tras — e isso e informacao, nao ausencia.
   if new.direction = 'inbound' and v_status_anterior = 'resolved' then
+    -- Marca local a transacao: a reabertura nao tem autor humano, mesmo quando
+    -- quem inseriu a mensagem estava autenticado. Desligada logo em seguida
+    -- para nao contaminar outros eventos da mesma transacao.
+    perform set_config('app.system_actor', 'on', true);
+
     insert into public.conversation_events
       (clinic_id, conversation_id, event_type, metadata)
     values
       (new.clinic_id, new.conversation_id, 'status_changed',
        jsonb_build_object('from', 'resolved', 'to', 'open', 'reason', 'inbound_message'));
+
+    perform set_config('app.system_actor', 'off', true);
   end if;
 
   return null;
@@ -509,13 +523,14 @@ create trigger messages_after_insert
 -- que validar: em vez de recusar o pedido errado, o pedido errado deixa de ser
 -- possivel.
 -- =============================================================================
-create or replace function public.stamp_message_channel()
+create or replace function public.stamp_message_defaults()
 returns trigger
 language plpgsql
 set search_path = ''
-as $
+as $$
 declare
   v_channel public.conversation_channel;
+  v_name    text;
 begin
   select c.channel into v_channel
     from public.conversations c
@@ -529,13 +544,37 @@ begin
   end if;
 
   new.channel := v_channel;
+
+  /*
+   * AUTORIA CARIMBADA, NUNCA ACEITA DO CLIENTE.
+   *
+   * O que o cliente mandou em author_user_id / author_name_snapshot e
+   * descartado. Autoria historica forjavel nao e autoria: bastaria um membro
+   * enviar o id de um colega para que uma mensagem constasse como dita por
+   * outra pessoa — e o snapshot existe justamente para sobreviver a saida do
+   * funcionario, ou seja, para ser lido como verdade muito depois.
+   *
+   * Mensagem que CHEGA nunca tem autor interno.
+   * Saida sem usuario autenticado (futuro envio automatico) fica sem autor, em
+   * vez de inventar um usuario falso.
+   */
+  if new.direction = 'inbound' or auth.uid() is null then
+    new.author_user_id       := null;
+    new.author_name_snapshot := null;
+  else
+    select sn.full_name into v_name
+      from public.current_actor_snapshot(new.clinic_id) sn;
+    new.author_user_id       := auth.uid();
+    new.author_name_snapshot := v_name;
+  end if;
+
   return new;
 end;
-$;
+$$;
 
-create trigger messages_stamp_channel
+create trigger messages_stamp_defaults
   before insert on public.messages
-  for each row execute function public.stamp_message_channel();
+  for each row execute function public.stamp_message_defaults();
 
 -- =============================================================================
 -- Autoria dos eventos: carimbada, nunca informada
@@ -573,8 +612,22 @@ declare
   v_name text;
   v_role public.clinic_role;
 begin
-  if auth.uid() is null then
-    -- Evento do sistema (reabertura automatica). Os tres campos ficam nulos.
+  /*
+   * Evento do SISTEMA: sem usuario autenticado, ou marcado explicitamente.
+   *
+   * A marca existe por causa da reabertura automatica. Quando a atendente
+   * registra uma mensagem que chegou, ela decidiu registrar a mensagem — nao
+   * decidiu reabrir a conversa. Atribuir a ela o `status_changed` diria que ela
+   * fez algo que nao fez.
+   *
+   * E, quando o webhook existir, o MESMO evento nascera sem usuario nenhum. Se
+   * o caminho manual atribuisse a uma pessoa e o automatico nao, "quem mudou
+   * este status?" teria duas respostas para o mesmo tipo de evento.
+   *
+   * Quem registrou a mensagem continua rastreavel: ela tem autor proprio.
+   */
+  if auth.uid() is null
+     or coalesce(current_setting('app.system_actor', true), '') = 'on' then
     new.actor_user_id       := null;
     new.actor_name_snapshot := null;
     new.actor_role_snapshot := null;
@@ -636,3 +689,477 @@ $$;
 create trigger conversation_events_validate_appointment
   before insert on public.conversation_events
   for each row execute function public.validate_conversation_event_appointment();
+
+-- =============================================================================
+-- IDENTIDADE IMUTAVEL
+--
+-- `channel` participa da identidade da thread; trocar o canal de uma conversa
+-- existente seria dizer que ela sempre foi outra coisa, e os indices de
+-- identidade passariam a governar linhas que nunca foram verificadas sob a
+-- regra nova.
+--
+-- Para o fallback SEM telefone, `provider` + `provider_contact_id` SAO a
+-- identidade — trocar um deles em silencio significaria afirmar que dois
+-- contatos de provedores diferentes sao a mesma pessoa, que e exatamente o que
+-- a decisao 17 recusou. Com telefone presente, `provider` volta a ser metadado
+-- operacional e pode mudar numa troca Evolution -> Meta.
+--
+-- Preencher `provider_contact_id` que era nulo E permitido: enriquecer o que
+-- nao se sabia nao e trocar de identidade.
+-- =============================================================================
+create or replace function public.enforce_conversation_identity()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.channel is distinct from old.channel then
+    raise exception 'IDENTITY_IMMUTABLE: canal da conversa nao pode mudar.'
+      using errcode = '22023';
+  end if;
+
+  -- valor -> outro valor, ou valor -> nulo: nao. nulo -> valor: sim.
+  if old.provider_contact_id is not null
+     and new.provider_contact_id is distinct from old.provider_contact_id then
+    raise exception 'IDENTITY_IMMUTABLE: provider_contact_id ja definido nao pode mudar.'
+      using errcode = '22023';
+  end if;
+
+  -- Sem telefone, o provedor faz parte da chave de identidade.
+  if old.contact_phone_e164 is null
+     and old.provider_contact_id is not null
+     and new.provider is distinct from old.provider then
+    raise exception
+      'IDENTITY_IMMUTABLE: sem telefone, o provedor faz parte da identidade e nao pode mudar.'
+      using errcode = '22023';
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger conversations_enforce_identity
+  before update on public.conversations
+  for each row execute function public.enforce_conversation_identity();
+
+-- =============================================================================
+-- Evento de criacao, automatico
+--
+-- SECURITY DEFINER porque `authenticated` nao tem INSERT em
+-- conversation_events (ver grants): o log e escrito por caminhos controlados,
+-- nunca pelo cliente.
+-- =============================================================================
+create or replace function public.on_conversation_created()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.conversation_events
+    (clinic_id, conversation_id, event_type, metadata)
+  values
+    (new.clinic_id, new.id, 'conversation_created',
+     jsonb_build_object('channel', new.channel));
+  return null;
+end;
+$$;
+
+create trigger conversations_after_insert
+  after insert on public.conversations
+  for each row execute function public.on_conversation_created();
+
+-- =============================================================================
+-- OPERACOES DE CONTROLE
+--
+-- Por que funcoes e nao UPDATE direto:
+--
+-- Com `grant update on conversations to authenticated`, o filtro por versao
+-- seria protocolo da aplicacao — nada obrigaria um cliente a usa-lo, e a
+-- concorrencia otimista viraria convencao voluntaria. Aqui ela vira a UNICA
+-- porta: `authenticated` perdeu UPDATE, e a versao esperada e parametro
+-- obrigatorio.
+--
+-- A troca que isso implica, dita com todas as letras: no caminho de ESCRITA de
+-- controle, a barreira deixa de ser o RLS e passa a ser a checagem explicita de
+-- `is_clinic_member` dentro de cada funcao. Leitura continua sob RLS, os grants
+-- continuam minimos, e as FKs compostas continuam tornando referencia
+-- cross-tenant impossivel. E o mesmo padrao que `create_clinic_with_owner` ja
+-- usa desde a fundacao.
+--
+-- Contrato de retorno (jsonb), igual para as seis:
+--   { "outcome": "ok",        "conversation": {...} }
+--   { "outcome": "conflict",  "conversation": {...} }  <- estado ATUAL relido
+--   { "outcome": "not_found" }                         <- inexistente OU outro tenant
+--
+-- `not_found` cobre os dois casos com a MESMA resposta, de proposito: distinguir
+-- revelaria a existencia de conversa alheia. O mapeamento para HTTP e da API.
+-- =============================================================================
+
+/** Serializacao unica, para que as seis funcoes devolvam exatamente a mesma forma. */
+create or replace function public.conversation_row_json(c public.conversations)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'id', c.id,
+    'clinicId', c.clinic_id,
+    'channel', c.channel,
+    'provider', c.provider,
+    'providerContactId', c.provider_contact_id,
+    'contactPhoneE164', c.contact_phone_e164,
+    'contactNameSnapshot', c.contact_name_snapshot,
+    'patientId', c.patient_id,
+    'status', c.status,
+    'assignedTo', c.assigned_to,
+    'lastMessageAt', c.last_message_at,
+    'lastInboundAt', c.last_inbound_at,
+    'lastOutboundAt', c.last_outbound_at,
+    'version', c.version,
+    'createdAt', c.created_at,
+    'updatedAt', c.updated_at
+  );
+$$;
+
+/**
+ * Resposta de conflito com o estado ATUAL.
+ *
+ * Rele a linha em vez de devolver a que foi lida no inicio: entre a leitura e o
+ * UPDATE outra transacao pode ter commitado, e devolver a versao velha faria a
+ * tela mostrar como "atual" justamente o estado que ja nao vale.
+ */
+create or replace function public.conversation_conflict(p_conversation_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v public.conversations%rowtype;
+begin
+  select * into v from public.conversations where id = p_conversation_id;
+  if not found then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+  return jsonb_build_object('outcome', 'conflict',
+                            'conversation', public.conversation_row_json(v));
+end;
+$$;
+
+-- ---------------------------------------------------------------- assumir
+create or replace function public.conversation_assign(
+  p_conversation_id  uuid,
+  p_expected_version integer
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_old public.conversations%rowtype;
+  v_new public.conversations%rowtype;
+begin
+  select * into v_old from public.conversations where id = p_conversation_id;
+  if not found or not public.is_clinic_member(v_old.clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  -- `assigned_to is null` alem da versao: duas pessoas nunca recebem sucesso no
+  -- mesmo assign, mesmo que a versao coincida por outro caminho.
+  update public.conversations
+     set assigned_to = auth.uid()
+   where id = p_conversation_id
+     and version = p_expected_version
+     and assigned_to is null
+  returning * into v_new;
+
+  if not found then
+    return public.conversation_conflict(p_conversation_id);
+  end if;
+
+  insert into public.conversation_events
+    (clinic_id, conversation_id, event_type, metadata)
+  values
+    (v_new.clinic_id, v_new.id, 'assigned',
+     jsonb_build_object('to_user_id', auth.uid()));
+
+  return jsonb_build_object('outcome', 'ok',
+                            'conversation', public.conversation_row_json(v_new));
+end;
+$$;
+
+-- ---------------------------------------------------------------- transferir
+create or replace function public.conversation_transfer(
+  p_conversation_id  uuid,
+  p_expected_version integer,
+  p_to_user_id       uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_old public.conversations%rowtype;
+  v_new public.conversations%rowtype;
+begin
+  select * into v_old from public.conversations where id = p_conversation_id;
+  if not found or not public.is_clinic_member(v_old.clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  -- Transferir exige que ja houvesse dono: "de X para Y" nunca pode virar
+  -- "de qualquer um para Y". Sem dono, a operacao correta e assumir.
+  update public.conversations
+     set assigned_to = p_to_user_id
+   where id = p_conversation_id
+     and version = p_expected_version
+     and assigned_to is not null
+  returning * into v_new;
+
+  if not found then
+    return public.conversation_conflict(p_conversation_id);
+  end if;
+
+  -- p_to_user_id ser membro NAO e checado aqui: a FK composta
+  -- (clinic_id, assigned_to) -> clinic_members ja torna isso impossivel, e
+  -- duplicar a regra criaria dois lugares para ela divergir.
+  insert into public.conversation_events
+    (clinic_id, conversation_id, event_type, metadata)
+  values
+    (v_new.clinic_id, v_new.id, 'transferred',
+     jsonb_build_object('from_user_id', v_old.assigned_to, 'to_user_id', p_to_user_id));
+
+  return jsonb_build_object('outcome', 'ok',
+                            'conversation', public.conversation_row_json(v_new));
+end;
+$$;
+
+-- ---------------------------------------------------------------- devolver
+create or replace function public.conversation_release(
+  p_conversation_id  uuid,
+  p_expected_version integer
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_old public.conversations%rowtype;
+  v_new public.conversations%rowtype;
+begin
+  select * into v_old from public.conversations where id = p_conversation_id;
+  if not found or not public.is_clinic_member(v_old.clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  update public.conversations
+     set assigned_to = null
+   where id = p_conversation_id
+     and version = p_expected_version
+     and assigned_to is not null
+  returning * into v_new;
+
+  if not found then
+    return public.conversation_conflict(p_conversation_id);
+  end if;
+
+  insert into public.conversation_events
+    (clinic_id, conversation_id, event_type, metadata)
+  values
+    (v_new.clinic_id, v_new.id, 'released',
+     jsonb_build_object('from_user_id', v_old.assigned_to));
+
+  return jsonb_build_object('outcome', 'ok',
+                            'conversation', public.conversation_row_json(v_new));
+end;
+$$;
+
+-- ---------------------------------------------------------------- status
+create or replace function public.conversation_set_status(
+  p_conversation_id  uuid,
+  p_expected_version integer,
+  p_status           public.conversation_status
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_old public.conversations%rowtype;
+  v_new public.conversations%rowtype;
+begin
+  select * into v_old from public.conversations where id = p_conversation_id;
+  if not found or not public.is_clinic_member(v_old.clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  -- Transicao invalida sobe como excecao do trigger (22023) e aborta a
+  -- transacao inteira, evento incluso. E o comportamento certo: nao pode existir
+  -- evento de uma mudanca que nao aconteceu.
+  update public.conversations
+     set status = p_status
+   where id = p_conversation_id
+     and version = p_expected_version
+  returning * into v_new;
+
+  if not found then
+    return public.conversation_conflict(p_conversation_id);
+  end if;
+
+  -- Status igual ao anterior nao gera evento: o log registra o que mudou.
+  if v_new.status is distinct from v_old.status then
+    insert into public.conversation_events
+      (clinic_id, conversation_id, event_type, metadata)
+    values
+      (v_new.clinic_id, v_new.id, 'status_changed',
+       jsonb_build_object('from', v_old.status, 'to', v_new.status));
+  end if;
+
+  return jsonb_build_object('outcome', 'ok',
+                            'conversation', public.conversation_row_json(v_new));
+end;
+$$;
+
+-- ---------------------------------------------------------------- paciente
+create or replace function public.conversation_link_patient(
+  p_conversation_id  uuid,
+  p_expected_version integer,
+  p_patient_id       uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_old public.conversations%rowtype;
+  v_new public.conversations%rowtype;
+begin
+  select * into v_old from public.conversations where id = p_conversation_id;
+  if not found or not public.is_clinic_member(v_old.clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  -- Paciente de outra clinica e recusado pela FK composta (23503), nao por
+  -- checagem aqui.
+  update public.conversations
+     set patient_id = p_patient_id
+   where id = p_conversation_id
+     and version = p_expected_version
+  returning * into v_new;
+
+  if not found then
+    return public.conversation_conflict(p_conversation_id);
+  end if;
+
+  insert into public.conversation_events
+    (clinic_id, conversation_id, event_type, metadata)
+  values
+    (v_new.clinic_id, v_new.id, 'patient_linked',
+     jsonb_build_object('patient_id', p_patient_id));
+
+  return jsonb_build_object('outcome', 'ok',
+                            'conversation', public.conversation_row_json(v_new));
+end;
+$$;
+
+create or replace function public.conversation_unlink_patient(
+  p_conversation_id  uuid,
+  p_expected_version integer
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_old public.conversations%rowtype;
+  v_new public.conversations%rowtype;
+begin
+  select * into v_old from public.conversations where id = p_conversation_id;
+  if not found or not public.is_clinic_member(v_old.clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  update public.conversations
+     set patient_id = null
+   where id = p_conversation_id
+     and version = p_expected_version
+     and patient_id is not null
+  returning * into v_new;
+
+  if not found then
+    return public.conversation_conflict(p_conversation_id);
+  end if;
+
+  insert into public.conversation_events
+    (clinic_id, conversation_id, event_type, metadata)
+  values
+    (v_new.clinic_id, v_new.id, 'patient_unlinked',
+     jsonb_build_object('patient_id', v_old.patient_id));
+
+  return jsonb_build_object('outcome', 'ok',
+                            'conversation', public.conversation_row_json(v_new));
+end;
+$$;
+
+-- ---------------------------------------------------------------- agendamento
+--
+-- Nao leva versao: registrar proveniencia nao muda o estado da conversa. O
+-- trigger `conversation_events_validate_appointment` continua exigindo que o
+-- agendamento seja da MESMA clinica, com comparacao explicita de clinic_id.
+create or replace function public.conversation_log_appointment(
+  p_conversation_id uuid,
+  p_appointment_id  uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v public.conversations%rowtype;
+begin
+  select * into v from public.conversations where id = p_conversation_id;
+  if not found or not public.is_clinic_member(v.clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  insert into public.conversation_events
+    (clinic_id, conversation_id, event_type, metadata)
+  values
+    (v.clinic_id, v.id, 'appointment_created',
+     jsonb_build_object('appointment_id', p_appointment_id));
+
+  return jsonb_build_object('outcome', 'ok',
+                            'conversation', public.conversation_row_json(v));
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Privilegios das funcoes de controle.
+--
+-- Declarados aqui e nao herdados do default do PostgreSQL, que concede EXECUTE
+-- a PUBLIC — o mesmo cuidado que a 0004 tomou com create_clinic_with_owner.
+-- -----------------------------------------------------------------------------
+revoke execute on function public.conversation_row_json(public.conversations) from public, anon;
+revoke execute on function public.conversation_conflict(uuid)                 from public, anon;
+revoke execute on function public.conversation_assign(uuid, integer)          from public, anon;
+revoke execute on function public.conversation_transfer(uuid, integer, uuid)  from public, anon;
+revoke execute on function public.conversation_release(uuid, integer)         from public, anon;
+revoke execute on function public.conversation_set_status(uuid, integer, public.conversation_status)
+  from public, anon;
+revoke execute on function public.conversation_link_patient(uuid, integer, uuid) from public, anon;
+revoke execute on function public.conversation_unlink_patient(uuid, integer)     from public, anon;
+revoke execute on function public.conversation_log_appointment(uuid, uuid)       from public, anon;
+
+grant execute on function public.conversation_assign(uuid, integer)         to authenticated;
+grant execute on function public.conversation_transfer(uuid, integer, uuid) to authenticated;
+grant execute on function public.conversation_release(uuid, integer)        to authenticated;
+grant execute on function public.conversation_set_status(uuid, integer, public.conversation_status)
+  to authenticated;
+grant execute on function public.conversation_link_patient(uuid, integer, uuid) to authenticated;
+grant execute on function public.conversation_unlink_patient(uuid, integer)     to authenticated;
+grant execute on function public.conversation_log_appointment(uuid, uuid)       to authenticated;
+
+-- conversation_conflict e conversation_row_json sao auxiliares internas: nao
+-- ha motivo para o cliente chama-las diretamente.
