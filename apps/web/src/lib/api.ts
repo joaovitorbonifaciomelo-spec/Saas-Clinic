@@ -1,3 +1,4 @@
+import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { CLINIC_HEADER, type MeResponse } from '@clinicas/shared'
 import { getPublicEnv } from './env'
@@ -22,13 +23,25 @@ export class ApiError extends Error {
   }
 }
 
-async function getAccessToken(): Promise<string | null> {
+/**
+ * Token de acesso, memoizado POR REQUISICAO.
+ *
+ * `apiFetch` chamava isto em toda ida a API — e a agenda dispara cinco em
+ * paralelo. Eram cinco clientes Supabase construidos, cinco leituras de cookie
+ * e, quando o token estava perto de expirar, cinco tentativas concorrentes de
+ * refresh contra o servidor de auth para renovar a MESMA sessao.
+ *
+ * `cache` do React dedupa dentro de um unico render do servidor e nada alem
+ * disso: nao ha estado entre requisicoes, entao um token nunca atravessa de um
+ * usuario para outro.
+ */
+const getAccessToken = cache(async (): Promise<string | null> => {
   const supabase = await createSupabaseServerClient()
   const {
     data: { session },
   } = await supabase.auth.getSession()
   return session?.access_token ?? null
-}
+})
 
 interface ApiRequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'

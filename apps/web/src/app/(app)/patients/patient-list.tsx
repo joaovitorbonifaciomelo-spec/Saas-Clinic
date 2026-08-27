@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useOptimistic, useState, useTransition } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { Patient } from '@clinicas/shared'
 import { formatPhone, initials } from '../../ui/format'
 import { IconPlus, IconSearch } from '../../ui/icons'
@@ -25,7 +26,26 @@ export function PatientList({
   selectedId?: string
   query: string
 }) {
+  const router = useRouter()
   const [q, setQ] = useState(query)
+
+  /*
+   * Trocar de paciente muda so a query string, entao o servidor re-renderiza a
+   * rota e o realce demorava a ida e volta inteira para sair do lugar — o mesmo
+   * clique morto medido no seletor Dia/Semana.
+   *
+   * O realce passa para o item clicado na hora; a ficha a direita continua
+   * mostrando o paciente anterior ate a nova chegar, marcada como ocupada.
+   */
+  const [pendente, startTransition] = useTransition()
+  const [selecionado, setSelecionado] = useOptimistic(selectedId)
+
+  function abrir(id: string): void {
+    startTransition(() => {
+      setSelecionado(id)
+      router.push(`/patients?p=${id}`, { scroll: false })
+    })
+  }
 
   const filtrados = useMemo(() => {
     const termo = q.trim().toLowerCase()
@@ -66,22 +86,35 @@ export function PatientList({
         <span className="label">
           {q ? `${filtrados.length} de ${patients.length}` : `${patients.length} pacientes`}
         </span>
-        <Link href="/patients/new" className="btn sm">
+        {/* prefetch off: rota force-dynamic, o prefetch renderiza a pagina
+            inteira no servidor sem ninguem ter pedido. */}
+        <Link href="/patients/new" prefetch={false} className="btn sm">
           <IconPlus size={14} /> Novo paciente
         </Link>
       </div>
 
-      <ul className="master-list">
+      <ul className="master-list" data-pendente={pendente ? 'sim' : undefined}>
         {filtrados.length === 0 ? (
           <li className="empty">Nenhum paciente encontrado.</li>
         ) : (
           filtrados.map((p) => (
             <li key={p.id}>
+              {/*
+                Continua sendo <a> de verdade: abre em nova aba, tem endereco
+                proprio e funciona sem JavaScript. O onClick so antecipa o
+                realce; a navegacao em si e a mesma.
+              */}
               <Link
                 href={`/patients?p=${p.id}`}
                 scroll={false}
-                className={`master-item ${p.id === selectedId ? 'is-selected' : ''}`}
-                aria-current={p.id === selectedId ? 'true' : undefined}
+                prefetch={false}
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return
+                  event.preventDefault()
+                  abrir(p.id)
+                }}
+                className={`master-item ${p.id === selecionado ? 'is-selected' : ''}`}
+                aria-current={p.id === selecionado ? 'true' : undefined}
               >
                 <span className="avatar sm">{initials(p.name)}</span>
                 <span style={{ minWidth: 0, flex: 1 }}>

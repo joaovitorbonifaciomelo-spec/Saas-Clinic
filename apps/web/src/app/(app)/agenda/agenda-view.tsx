@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useOptimistic, useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   APPOINTMENT_STATUS_LABELS,
@@ -11,7 +11,14 @@ import {
   type Professional,
   type Service,
 } from '@clinicas/shared'
-import { addDays, formatDateLabel, localDateKey, localTimeLabel, weekdayOf } from './agenda-time'
+import {
+  addDays,
+  formatDateLabel,
+  localDateKey,
+  localTimeLabel,
+  rangeFor,
+  weekdayOf,
+} from './agenda-time'
 import { fullDateLabel, shortDateLabel } from '../../ui/format'
 import { IconChevronLeft, IconChevronRight, IconPlus } from '../../ui/icons'
 import { AgendaGrid, type Column } from './agenda-grid'
@@ -47,6 +54,27 @@ export function AgendaView(props: AgendaViewProps) {
     | null
   >(props.openNew ? { mode: 'create', date: props.date } : null)
 
+  /*
+   * Toolbar otimista.
+   *
+   * Medido em producao: trocar Dia/Semana levava 1,4-1,6s ate QUALQUER pixel
+   * mudar. O clique ficava morto enquanto o servidor renderizava a rota inteira,
+   * e a pessoa clicava de novo achando que nao pegou.
+   *
+   * Agora o controle assume o novo valor na hora e a navegacao acontece dentro
+   * de uma transicao. A grade abaixo continua mostrando os dados anteriores ate
+   * os novos chegarem — nao pisca, nao esvazia — com uma barra fina de progresso
+   * dizendo que ainda esta vindo coisa.
+   *
+   * useOptimistic (nao useState) porque o valor precisa VOLTAR sozinho se a
+   * navegacao falhar ou for substituida: guardar em estado proprio criaria uma
+   * segunda fonte de verdade capaz de discordar da URL para sempre.
+   */
+  const [pendente, startTransition] = useTransition()
+  const [viewOtim, setViewOtim] = useOptimistic(props.view)
+  const [dateOtim, setDateOtim] = useOptimistic(props.date)
+  const [profOtim, setProfOtim] = useOptimistic(props.professionalId)
+
   function navigate(patch: Record<string, string>): void {
     const next = new URLSearchParams(searchParams.toString())
     for (const [k, v] of Object.entries(patch)) {
@@ -54,7 +82,13 @@ export function AgendaView(props: AgendaViewProps) {
       else next.set(k, v)
     }
     next.delete('novo')
-    router.push(`/agenda?${next.toString()}`)
+
+    startTransition(() => {
+      if (patch.view === 'day' || patch.view === 'week') setViewOtim(patch.view)
+      if (patch.date) setDateOtim(patch.date)
+      if (patch.professional !== undefined) setProfOtim(patch.professional)
+      router.push(`/agenda?${next.toString()}`)
+    })
   }
 
   /** Encaixe: derivado a cada render, nunca flag guardada. */
@@ -151,13 +185,23 @@ export function AgendaView(props: AgendaViewProps) {
     }))
   }, [props.view, props.days, props.professionalId, props.date, ativos, selecionado])
 
-  const step = props.view === 'week' ? 7 : 1
-  const primeiro = props.days[0]!
-  const ultimo = props.days[props.days.length - 1]!
+  const step = viewOtim === 'week' ? 7 : 1
+
+  /*
+   * O rotulo acompanha o controle, nao os dados. `rangeFor` e funcao pura do
+   * mesmo modulo que o servidor usa, entao o intervalo calculado aqui e o mesmo
+   * que vai chegar — sem inventar nada e sem esperar a ida e volta.
+   */
+  const diasOtim = useMemo(
+    () => rangeFor(dateOtim, viewOtim, props.timezone).days,
+    [dateOtim, viewOtim, props.timezone],
+  )
+  const primeiro = diasOtim[0]!
+  const ultimo = diasOtim[diasOtim.length - 1]!
   const periodo =
-    props.view === 'week'
+    viewOtim === 'week'
       ? `${shortDateLabel(primeiro)} – ${shortDateLabel(ultimo)} de ${ultimo.slice(0, 4)}`
-      : fullDateLabel(props.date)
+      : fullDateLabel(dateOtim)
 
   const doPeriodo = props.appointments.filter(isActive)
 
@@ -175,7 +219,9 @@ export function AgendaView(props: AgendaViewProps) {
         </button>
       </div>
 
-      <div className="card agenda-toolbar">
+      <div className="card agenda-toolbar" data-pendente={pendente ? 'sim' : undefined}>
+        {/* Barra fina de progresso: diz "ainda vem coisa" sem tirar nada da tela. */}
+        {pendente ? <span className="tb-progress" aria-hidden /> : null}
         <div className="tb-group">
           <button
             type="button"
@@ -188,7 +234,7 @@ export function AgendaView(props: AgendaViewProps) {
             type="button"
             className="ghost sm"
             aria-label="Período anterior"
-            onClick={() => navigate({ date: addDays(props.date, -step) })}
+            onClick={() => navigate({ date: addDays(dateOtim, -step) })}
           >
             <IconChevronLeft />
           </button>
@@ -196,7 +242,7 @@ export function AgendaView(props: AgendaViewProps) {
             type="button"
             className="ghost sm"
             aria-label="Próximo período"
-            onClick={() => navigate({ date: addDays(props.date, step) })}
+            onClick={() => navigate({ date: addDays(dateOtim, step) })}
           >
             <IconChevronRight />
           </button>
@@ -207,13 +253,13 @@ export function AgendaView(props: AgendaViewProps) {
           <input
             type="date"
             className="tb-date"
-            value={props.date}
+            value={dateOtim}
             onChange={(e) => navigate({ date: e.target.value })}
             aria-label="Ir para data"
           />
           <select
             className="tb-select"
-            value={props.professionalId}
+            value={profOtim}
             onChange={(e) => navigate({ professional: e.target.value })}
             aria-label="Filtrar por profissional"
           >
@@ -228,14 +274,14 @@ export function AgendaView(props: AgendaViewProps) {
           <div className="seg">
             <button
               type="button"
-              aria-pressed={props.view === 'day'}
+              aria-pressed={viewOtim === 'day'}
               onClick={() => navigate({ view: 'day' })}
             >
               Dia
             </button>
             <button
               type="button"
-              aria-pressed={props.view === 'week'}
+              aria-pressed={viewOtim === 'week'}
               onClick={() => navigate({ view: 'week' })}
             >
               Semana
@@ -244,8 +290,9 @@ export function AgendaView(props: AgendaViewProps) {
         </div>
       </div>
 
-      <AgendaGrid
-        columns={columns}
+      <div className="agenda-slot" aria-busy={pendente} data-pendente={pendente ? 'sim' : undefined}>
+        <AgendaGrid
+          columns={columns}
         appointments={props.appointments}
         availability={props.availability}
         timezone={props.timezone}
@@ -262,10 +309,11 @@ export function AgendaView(props: AgendaViewProps) {
         groupFrom={props.view === 'week' ? 3 : undefined}
         onSelect={(a) => setDrawer({ mode: 'edit', appointment: a })}
         onOpenGroup={(appointments) => setDrawer({ mode: 'group', appointments })}
-        onCreate={(dayKey, time, professionalId) =>
-          setDrawer({ mode: 'create', date: dayKey, time, professionalId })
-        }
-      />
+          onCreate={(dayKey, time, professionalId) =>
+            setDrawer({ mode: 'create', date: dayKey, time, professionalId })
+          }
+        />
+      </div>
 
       {/*
         Dez itens numa fila unica viravam uma parede de texto pequeno. Duas

@@ -32,7 +32,29 @@ export default async function PatientsPage({ searchParams }: PageProps) {
   const clinicId = activeClinic.clinicId
   const timezone = activeClinic.clinicTimezone
 
-  const patients = await apiFetch<Patient[]>('/api/patients', { clinicId })
+  /*
+   * O historico so espera a lista quando NAO ha paciente na URL.
+   *
+   * Antes eram sempre tres ondas em serie: me -> pacientes -> agendamentos. Mas
+   * o id do paciente selecionado quase sempre vem da propria URL (`?p=`), e nesse
+   * caso o historico nao depende da lista em nada — a espera era invencao nossa.
+   * So o primeiro acesso, sem `?p=`, precisa saber quem e o primeiro da lista.
+   *
+   * Vale a onda economizada: a mediana do Funnel e 246ms, mas o p90 e 853ms.
+   */
+  const historicoDe = (patientId: string) =>
+    apiFetch<AppointmentWithRelations[]>(`/api/appointments?patientId=${patientId}`, {
+      clinicId,
+    }).catch((error: unknown) => {
+      // Historico e complemento: se falhar, a ficha ainda serve.
+      if (!(error instanceof ApiError)) throw error
+      return [] as AppointmentWithRelations[]
+    })
+
+  const [patients, historicoPreCarregado] = await Promise.all([
+    apiFetch<Patient[]>('/api/patients', { clinicId }),
+    params.p ? historicoDe(params.p) : Promise.resolve(null),
+  ])
 
   // Sem selecao explicita, abre o primeiro: painel vazio nao ajuda ninguem.
   const selectedId = params.p ?? patients[0]?.id
@@ -40,15 +62,15 @@ export default async function PatientsPage({ searchParams }: PageProps) {
 
   let appointments: AppointmentWithRelations[] = []
   if (selected) {
-    try {
-      appointments = await apiFetch<AppointmentWithRelations[]>(
-        `/api/appointments?patientId=${selected.id}`,
-        { clinicId },
-      )
-    } catch (error) {
-      // Historico e complemento: se falhar, a ficha ainda serve.
-      if (!(error instanceof ApiError)) throw error
-    }
+    /*
+     * O pre-carregado so vale se o `?p=` era mesmo de um paciente desta clinica.
+     * Se o id da URL nao existir na lista, ele foi buscado a toa (a API devolve
+     * vazio pelo RLS) e caimos no caminho normal do primeiro da lista.
+     */
+    appointments =
+      historicoPreCarregado !== null && selected.id === params.p
+        ? historicoPreCarregado
+        : await historicoDe(selected.id)
   }
 
   const proxima = selectNextAppointment(appointments)
@@ -89,7 +111,18 @@ export default async function PatientsPage({ searchParams }: PageProps) {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Link href={`/patients/${selected.id}/edit`} className="btn secondary sm">
+                {/*
+                   prefetch desligado: sao rotas force-dynamic, entao o prefetch do
+                   Next nao busca um shell estatico — ele renderiza a rota inteira
+                   no servidor. Medido: abrir Pacientes disparava 4 requisicoes
+                   extras (as duas rotas, duas vezes cada) que ninguem pediu e que
+                   competiam com a navegacao de verdade.
+                */}
+                <Link
+                  href={`/patients/${selected.id}/edit`}
+                  prefetch={false}
+                  className="btn secondary sm"
+                >
                   <IconEdit /> Editar paciente
                 </Link>
                 <Link
