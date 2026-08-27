@@ -151,20 +151,22 @@ for (const row of grants.rows) {
  */
 const FORBIDDEN_FOR_AUTHENTICATED = ['TRUNCATE', 'TRIGGER', 'REFERENCES']
 
-const ATENDIMENTO = ['conversations', 'messages', 'conversation_events']
-
 /**
- * Matriz explicita de service_role nas tabelas do Atendimento.
+ * Matriz explicita de service_role. Vale para as 11 tabelas, sem excecao.
  *
- * A 0015 usou `grant all` e levou TRUNCATE, REFERENCES e TRIGGER de brinde —
- * `all` nao e um conjunto abstrato, expande para os sete privilegios da tabela.
- * A 0016 revogou os tres. Este bloco existe para que a regressao apareca aqui e
- * nao numa leitura manual de ACL seis meses depois.
+ * As 0006, 0013 e 0015 usaram `grant all`, e `all` em tabela nao e um conjunto
+ * abstrato: expande para os sete privilegios que a tabela suporta. As 0016 e
+ * 0017 revogaram os tres excedentes. Este bloco existe para que a regressao
+ * apareca aqui e nao numa leitura manual de ACL seis meses depois.
  *
  * TRUNCATE e o que mais pesa: nao e coberto por RLS, nao dispara trigger de
  * linha, e esvazia todos os tenants numa instrucao sem deixar rastro.
+ *
+ * NAO HA EXCECAO POR TABELA, de proposito. Se um dia alguma precisar de outro
+ * privilegio, a lista abaixo vira um mapa por tabela e a excecao fica escrita
+ * com o motivo ao lado — nunca um caso especial silencioso no meio do laco.
  */
-const SERVICE_ROLE_ATENDIMENTO = {
+const SERVICE_ROLE_MATRIZ = {
   SELECT: true,
   INSERT: true,
   UPDATE: true,
@@ -238,15 +240,8 @@ for (const role of ['anon', 'authenticated', 'service_role']) {
       }
     }
   }
-  if (role === 'service_role') {
-    for (const table of TABLES.filter((t) => !ATENDIMENTO.includes(t))) {
-      const actual = byRole[role]?.[table] ?? []
-      for (const needed of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
-        if (!actual.includes(needed))
-          fail(`service_role.${table} sem ${needed} (uso administrativo)`)
-      }
-    }
-  }
+  // service_role nao e conferido aqui: a matriz celula a celula, mais adiante,
+  // cobre as 11 tabelas e e mais estrita do que "tem os quatro de DML".
 }
 
 // --- Policies ----------------------------------------------------------------
@@ -305,11 +300,11 @@ for (const table of TABLES) {
 
 // --- service_role nas tabelas do Atendimento ---------------------------------
 console.log('')
-console.log('  MATRIZ DE service_role NO ATENDIMENTO')
+console.log('  MATRIZ DE service_role (as 11 tabelas)')
 console.log('  ' + '-'.repeat(64))
-const privsMatriz = Object.keys(SERVICE_ROLE_ATENDIMENTO)
-console.log('    ' + 'tabela'.padEnd(22) + privsMatriz.map((p) => p.slice(0, 4).padEnd(7)).join(''))
-for (const table of ATENDIMENTO) {
+const privsMatriz = Object.keys(SERVICE_ROLE_MATRIZ)
+console.log('    ' + 'tabela'.padEnd(28) + privsMatriz.map((p) => p.slice(0, 4).padEnd(7)).join(''))
+for (const table of TABLES) {
   const linha = []
   for (const priv of privsMatriz) {
     const { rows } = await client.query(
@@ -317,7 +312,7 @@ for (const table of ATENDIMENTO) {
       [`public.${table}`, priv],
     )
     const efetivo = rows[0].ok
-    const esperado = SERVICE_ROLE_ATENDIMENTO[priv]
+    const esperado = SERVICE_ROLE_MATRIZ[priv]
     linha.push((efetivo ? 'sim' : '-').padEnd(7))
     if (efetivo !== esperado) {
       fail(
@@ -325,7 +320,7 @@ for (const table of ATENDIMENTO) {
       )
     }
   }
-  console.log('    ' + table.padEnd(22) + linha.join(''))
+  console.log('    ' + table.padEnd(28) + linha.join(''))
 }
 
 // --- EXECUTE nas funcoes do Atendimento --------------------------------------

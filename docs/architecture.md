@@ -151,6 +151,49 @@ A API não filtra por `clinic_id` "na mão" torcendo para não esquecer um `WHER
 
 A `service_role` vive só em `.env.test`, usada pelo teste de isolamento para montar e desmontar o cenário — nunca numa asserção.
 
+### Nunca `GRANT ALL` para `service_role` — privilégios por lista positiva
+
+**Regra permanente:** nenhuma tabela da aplicação concede `grant all` a `service_role`. Os privilégios são concedidos por lista positiva explícita:
+
+```sql
+grant select, insert, update, delete on public.<tabela> to service_role;
+```
+
+`ALL` não é um conjunto abstrato de "o que for preciso": ele expande para os sete privilégios que a tabela suporta. As migrations 0006, 0013 e 0015 usaram `grant all`, e o resultado foi `service_role` com **TRUNCATE, REFERENCES e TRIGGER** nas onze tabelas — nenhum deles pedido por linha alguma do projeto. As 0016 e 0017 revogaram os três e reafirmaram os quatro de DML.
+
+#### `service_role` bypassa RLS. Isso não é motivo para conceder os outros três.
+
+Bypassar RLS significa **enxergar todas as linhas de todos os tenants**. Não significa poder apagar tudo sem rastro. São poderes de natureza diferente:
+
+| | RLS | Trigger de linha | FK |
+|---|---|---|---|
+| `DELETE` | filtra | dispara | respeita |
+| `TRUNCATE` | **não cobre** | **não dispara** | ignora (com `CASCADE`) |
+
+`TRUNCATE` é o único verbo capaz de esvaziar o banco inteiro numa instrução sem deixar rastro nos eventos de auditoria. Quem já tem BYPASSRLS não precisa dele — e concedê-lo "porque é papel administrativo mesmo" troca um poder de leitura por um poder de destruição, que não é a mesma coisa.
+
+**`REFERENCES`** permitiria apontar FK nova para as tabelas, fora do desenho tenant-first (as FKs compostas são criadas pelo dono, na migration). **`TRIGGER`** permitiria anexar gatilho — e os triggers destas tabelas *são* a regra de negócio: carimbo de autoria, versão, transição de status, imutabilidade de `clinic_id`.
+
+#### Testes administrativos usam DML explícito e cleanup controlado
+
+O teardown nunca trunca. Ele apaga `clinics` com `DELETE` e deixa a cascata levar membros, pacientes, agendamentos, conversas, mensagens e eventos:
+
+```ts
+await admin.from('clinics').delete().in('id', criados.clinics)
+```
+
+Isso importa por dois motivos além do privilégio. O `DELETE` **passa pelas FKs**, então uma cascata mal desenhada aparece como erro em vez de sumir silenciosamente; e ele atinge **exatamente os IDs criados por aquela execução**, nunca um padrão de nome ou um `LIKE`.
+
+#### Há uma razão estrutural por trás, e ela não enfraquece a regra
+
+`service_role` só é usada através de `createClient(url, serviceRoleKey)` — ou seja, PostgREST, que expõe DML e RPC. Não existe caminho por onde ela emita `TRUNCATE`, `CREATE TRIGGER` ou `ALTER TABLE`. Os três privilégios estavam concedidos e inalcançáveis ao mesmo tempo.
+
+Isso é argumento para removê-los, não para relaxar: um privilégio que ninguém usa é exatamente o que passa despercebido quando o caminho de acesso muda. No dia em que algum script abrir conexão SQL direta com essa chave, os três estariam lá esperando.
+
+#### Onde isso é verificado
+
+`pnpm verify:privileges` afirma a matriz célula a célula nas onze tabelas, lendo `has_table_privilege` do banco real — não repetindo a intenção do arquivo de migration. **Não há exceção por tabela.** Se alguma um dia precisar de outro privilégio, a matriz vira um mapa por tabela com o motivo escrito ao lado; nunca um caso especial silencioso dentro do laço.
+
 ### `X-Clinic-Id` é dado hostil
 
 O header vem do navegador. O `ClinicMembershipGuard` valida a forma (UUID) e prova a permissão com um `SELECT` em `clinic_members` que já passa pelo RLS. Se o usuário não for membro, a linha não existe para ele e a requisição morre ali.
