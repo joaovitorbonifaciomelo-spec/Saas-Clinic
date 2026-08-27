@@ -76,12 +76,14 @@ async function montarTenant(rotulo: string): Promise<Tenant> {
     .select('id')
     .single()
 
-  const { data: conversation, error: convError } = await db
-    .from('conversations')
-    .insert({ clinic_id: clinic!.id, channel: 'manual' })
-    .select('id, version')
-    .single()
+  const { data: criada, error: convError } = await db.rpc('conversation_create_manual', {
+    p_clinic_id: clinic!.id,
+    p_contact_phone_e164: null,
+    p_contact_name_snapshot: null,
+    p_patient_id: null,
+  })
   if (convError) throw new Error(`conversa de ${rotulo}: ${convError.message}`)
+  const conversation = (criada as RpcResult).conversation!
 
   return {
     userId,
@@ -115,14 +117,71 @@ afterAll(async () => {
   for (const id of criados.users) await admin.auth.admin.deleteUser(id)
 }, 120_000)
 
+/**
+ * Forma unica de resposta das funcoes de controle.
+ *
+ * Elas devolvem `outcome` em vez de lancar excecao porque conflito de versao e
+ * fluxo normal de caixa compartilhada, nao erro: duas atendentes clicando quase
+ * juntas e o caso esperado, e a que perdeu precisa receber o estado atual para
+ * a tela se corrigir sozinha.
+ */
+interface RpcResult {
+  outcome: 'ok' | 'conflict' | 'not_found' | 'exists' | 'not_manual' | 'invalid_body'
+  conversation?: Record<string, unknown>
+  message?: Record<string, unknown>
+}
+
+async function chamar(
+  db: SupabaseClient,
+  fn: string,
+  args: Record<string, unknown>,
+): Promise<RpcResult> {
+  const { data, error } = await db.rpc(fn, args)
+  if (error) throw new Error(`${fn}: ${error.message}`)
+  return data as RpcResult
+}
+
+async function criarManual(
+  t: Tenant,
+  extra: { telefone?: string | null; nome?: string | null; pacienteId?: string | null } = {},
+): Promise<RpcResult> {
+  return chamar(t.db, 'conversation_create_manual', {
+    p_clinic_id: t.clinicId,
+    p_contact_phone_e164: extra.telefone ?? null,
+    p_contact_name_snapshot: extra.nome ?? null,
+    p_patient_id: extra.pacienteId ?? null,
+  })
+}
+
 async function novaConversa(t: Tenant): Promise<{ id: string; version: number }> {
-  const { data, error } = await t.db
-    .from('conversations')
-    .insert({ clinic_id: t.clinicId, channel: 'manual' })
-    .select('id, version')
-    .single()
-  if (error) throw new Error(error.message)
-  return { id: data!.id as string, version: data!.version as number }
+  const r = await criarManual(t)
+  if (r.outcome !== 'ok') throw new Error(`create_manual devolveu ${r.outcome}`)
+  return { id: r.conversation!.id as string, version: r.conversation!.version as number }
+}
+
+async function novaMensagem(
+  t: Tenant,
+  conversationId: string,
+  direction: 'inbound' | 'outbound',
+  body: string,
+  occurredAt: string | null = null,
+): Promise<RpcResult> {
+  return chamar(t.db, 'conversation_add_manual_message', {
+    p_conversation_id: conversationId,
+    p_direction: direction,
+    p_body: body,
+    p_occurred_at: occurredAt,
+  })
+}
+
+/** Eventos de uma conversa, em ordem, lidos pelo admin (ignora RLS de proposito). */
+async function eventos(conversationId: string) {
+  const { data } = await admin
+    .from('conversation_events')
+    .select('event_type, actor_user_id, metadata, created_at')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true })
+  return data ?? []
 }
 
 /* ===========================================================================
@@ -293,24 +352,27 @@ describe('controle por RPC', () => {
    Autoria e proveniencia
    ======================================================================== */
 describe('autoria', () => {
-  it('outbound nao consegue forjar autor', async () => {
+  it('nao ha caminho para forjar autor: o campo nao e aceito do cliente', async () => {
     const c = await novaConversa(A)
-    const { data, error } = await A.db
-      .from('messages')
-      .insert({
-        clinic_id: A.clinicId,
-        conversation_id: c.id,
-        direction: 'outbound',
-        body: 'ola',
-        author_user_id: B.userId,
-        author_name_snapshot: 'Nome Falso',
-      })
-      .select('author_user_id, author_name_snapshot')
-      .single()
 
-    expect(error).toBeNull()
-    expect(data!.author_user_id).toBe(A.userId)
-    expect(data!.author_name_snapshot).not.toBe('Nome Falso')
+    // Antes o INSERT direto passava e o trigger corrigia o autor. Agora a
+    // tentativa e barrada uma camada antes, no privilegio.
+    const { error } = await A.db.from('messages').insert({
+      clinic_id: A.clinicId,
+      conversation_id: c.id,
+      direction: 'outbound',
+      body: 'ola',
+      author_user_id: B.userId,
+      author_name_snapshot: 'Nome Falso',
+    })
+    expect(error).not.toBeNull()
+    expect(error!.code).toBe('42501')
+
+    // E a funcao controlada nao tem parametro de autoria para forjar: quem
+    // assina e sempre auth.uid(), carimbado pelo servidor.
+    const r = await novaMensagem(A, c.id, 'outbound', 'ola')
+    expect(r.message!.authorUserId).toBe(A.userId)
+    expect(r.message!.authorName).not.toBe('Nome Falso')
   })
 
   it('nem service_role planta appointment_created cross-tenant', async () => {
@@ -407,6 +469,340 @@ describe('isolamento', () => {
 /* ===========================================================================
    Ainda dependem da API (commits 5 a 7)
    ======================================================================== */
+/* ===========================================================================
+   Criacao manual — o banco decide, nao o cliente
+   ======================================================================== */
+describe('criacao manual', () => {
+  it('INSERT direto em conversations e negado', async () => {
+    const { error } = await A.db
+      .from('conversations')
+      .insert({ clinic_id: A.clinicId, channel: 'manual' })
+    expect(error).not.toBeNull()
+    expect(error!.message).toMatch(/permission denied/i)
+  })
+
+  it('INSERT direto em messages e negado', async () => {
+    const { error } = await A.db.from('messages').insert({
+      clinic_id: A.clinicId,
+      conversation_id: A.conversationId,
+      direction: 'inbound',
+      body: 'oi',
+    })
+    expect(error).not.toBeNull()
+    expect(error!.message).toMatch(/permission denied/i)
+  })
+
+  it('nasce open, sem dono, versao 1 e canal manual', async () => {
+    const r = await criarManual(A)
+    expect(r.outcome).toBe('ok')
+    expect(r.conversation).toMatchObject({
+      status: 'open',
+      assignedTo: null,
+      version: 1,
+      channel: 'manual',
+      provider: null,
+    })
+  })
+
+  it('clinica sem vinculo devolve not_found, nao permission denied', async () => {
+    // A pede uma conversa na clinica de B. Nao pode vazar nem a existencia
+    // dela — por isso not_found, o mesmo que um UUID inventado daria.
+    const r = await chamar(A.db, 'conversation_create_manual', {
+      p_clinic_id: B.clinicId,
+      p_contact_phone_e164: null,
+      p_contact_name_snapshot: null,
+      p_patient_id: null,
+    })
+    expect(r.outcome).toBe('not_found')
+    expect(r.conversation).toBeUndefined()
+  })
+
+  it('paciente de outra clinica e barrado pela FK composta', async () => {
+    await expect(criarManual(A, { pacienteId: B.patientId })).rejects.toThrow()
+  })
+
+  it('nascer vinculada registra o paciente no proprio conversation_created', async () => {
+    const r = await criarManual(A, { pacienteId: A.patientId })
+    expect(r.outcome).toBe('ok')
+
+    const evs = await eventos(r.conversation!.id as string)
+    // Um evento so. A conversa NASCEU vinculada; ninguem executou a operacao de
+    // vincular, e inventar um patient_linked corromperia a auditoria.
+    expect(evs).toHaveLength(1)
+    expect(evs[0]!.event_type).toBe('conversation_created')
+    expect((evs[0]!.metadata as Record<string, unknown>).patient_id).toBe(A.patientId)
+  })
+})
+
+/* ===========================================================================
+   Identidade da thread e idempotencia
+   ======================================================================== */
+describe('identidade da thread', () => {
+  it('mesmo telefone na mesma clinica devolve a conversa existente', async () => {
+    const tel = `+5511${Date.now().toString().slice(-9)}`
+    const primeira = await criarManual(A, { telefone: tel })
+    const segunda = await criarManual(A, { telefone: tel })
+
+    expect(primeira.outcome).toBe('ok')
+    // Duas atendentes abrindo a mesma pessoa e fluxo normal, nao falha: a
+    // segunda recebe a MESMA thread em vez de um 23505 cru.
+    expect(segunda.outcome).toBe('exists')
+    expect(segunda.conversation!.id).toBe(primeira.conversation!.id)
+  })
+
+  it('mesmo telefone em clinicas diferentes convive', async () => {
+    const tel = `+5511${(Date.now() + 1).toString().slice(-9)}`
+    const emA = await criarManual(A, { telefone: tel })
+    const emB = await criarManual(B, { telefone: tel })
+    expect(emA.outcome).toBe('ok')
+    expect(emB.outcome).toBe('ok')
+    expect(emA.conversation!.id).not.toBe(emB.conversation!.id)
+  })
+
+  it('telefone fora de E.164 e recusado', async () => {
+    await expect(criarManual(A, { telefone: '11987654321' })).rejects.toThrow()
+  })
+
+  it('nem service_role troca o canal de uma conversa', async () => {
+    const c = await novaConversa(A)
+    const { error } = await admin
+      .from('conversations')
+      .update({ channel: 'whatsapp' })
+      .eq('id', c.id)
+    // Canal e parte da identidade: mudar reescreveria de que thread a conversa e.
+    expect(error).not.toBeNull()
+  })
+})
+
+/* ===========================================================================
+   Mensagens manuais — autoria x registro
+   ======================================================================== */
+describe('mensagens manuais', () => {
+  it('inbound: sem autor, mas com quem registrou', async () => {
+    const c = await novaConversa(A)
+    const r = await novaMensagem(A, c.id, 'inbound', 'Pode ser quinta?')
+    expect(r.outcome).toBe('ok')
+    // Quem DISSE foi o paciente; quem REGISTROU foi a atendente. Sao pessoas
+    // diferentes, e achatar isso num campo so falsificaria o historico.
+    expect(r.message!.authorUserId).toBeNull()
+    expect(r.message!.recordedByUserId).toBe(A.userId)
+    expect(r.message!.recordedByName).not.toBeNull()
+  })
+
+  it('outbound: autor e registrador sao a mesma pessoa', async () => {
+    const c = await novaConversa(A)
+    const r = await novaMensagem(A, c.id, 'outbound', 'Tenho quinta as 10.')
+    expect(r.message!.authorUserId).toBe(A.userId)
+    expect(r.message!.recordedByUserId).toBe(A.userId)
+  })
+
+  it('mensagem manual nunca finge entrega', async () => {
+    const c = await novaConversa(A)
+    const r = await novaMensagem(A, c.id, 'outbound', 'ok')
+    expect(r.message!.deliveryStatus).toBeNull()
+    expect(r.message!.channel).toBe('manual')
+  })
+
+  it('nem service_role marca entrega em mensagem manual', async () => {
+    const c = await novaConversa(A)
+    const { error } = await admin.from('messages').insert({
+      clinic_id: A.clinicId,
+      conversation_id: c.id,
+      channel: 'manual',
+      direction: 'outbound',
+      body: 'x',
+      delivery_status: 'delivered',
+    })
+    expect(error).not.toBeNull()
+    expect(error!.message).toMatch(/messages_manual_has_no_delivery|violates check/i)
+  })
+
+  it('conversa de outro tenant devolve not_found', async () => {
+    const r = await novaMensagem(A, B.conversationId, 'inbound', 'oi')
+    expect(r.outcome).toBe('not_found')
+  })
+
+  it('corpo vazio e recusado', async () => {
+    const c = await novaConversa(A)
+    const r = await novaMensagem(A, c.id, 'inbound', '   ')
+    expect(r.outcome).toBe('invalid_body')
+  })
+
+  it('inbound reabre conversa resolvida, e o evento e do SISTEMA', async () => {
+    const c = await novaConversa(A)
+    await chamar(A.db, 'conversation_set_status', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+      p_status: 'resolved',
+    })
+    await novaMensagem(A, c.id, 'inbound', 'voltei')
+
+    const { data } = await admin.from('conversations').select('status').eq('id', c.id).single()
+    expect(data!.status).toBe('open')
+
+    const reabertura = (await eventos(c.id)).filter(
+      (e) => (e.metadata as Record<string, unknown>)?.reason === 'inbound_message',
+    )
+    expect(reabertura).toHaveLength(1)
+    // Quem registrou a mensagem NAO decidiu reabrir. Atribuir a reabertura a
+    // essa pessoa poria na auditoria uma decisao que ela nunca tomou.
+    expect(reabertura[0]!.actor_user_id).toBeNull()
+  })
+
+  it('mensagem nao incrementa a versao da conversa', async () => {
+    const c = await novaConversa(A)
+    await novaMensagem(A, c.id, 'inbound', 'oi')
+    const { data } = await admin.from('conversations').select('version').eq('id', c.id).single()
+    // Senao toda mensagem que chega invalidaria o botao que a atendente tem na
+    // tela, e ela levaria 409 sem ter feito nada errado.
+    expect(data!.version).toBe(c.version)
+  })
+
+  it('mensagem atrasada nao faz a atividade andar para tras', async () => {
+    const c = await novaConversa(A)
+    const agora = new Date().toISOString()
+    const antes = new Date(Date.now() - 3_600_000).toISOString()
+    await novaMensagem(A, c.id, 'inbound', 'recente', agora)
+    await novaMensagem(A, c.id, 'inbound', 'atrasada', antes)
+
+    const { data } = await admin
+      .from('conversations')
+      .select('last_message_at')
+      .eq('id', c.id)
+      .single()
+    expect(new Date(data!.last_message_at as string).getTime()).toBe(new Date(agora).getTime())
+  })
+})
+
+/* ===========================================================================
+   Ciclo de atribuicao e vinculo
+   ======================================================================== */
+describe('ciclo de atribuicao', () => {
+  it('transfer troca o dono e registra transferred, nao assigned', async () => {
+    const c = await novaConversa(A)
+    const assumida = await chamar(A.db, 'conversation_assign', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+    })
+    const r = await chamar(A.db, 'conversation_transfer', {
+      p_conversation_id: c.id,
+      p_expected_version: assumida.conversation!.version as number,
+      p_to_user_id: A2.id,
+    })
+    expect(r.outcome).toBe('ok')
+    expect(r.conversation!.assignedTo).toBe(A2.id)
+
+    const tipos = (await eventos(c.id)).map((e) => e.event_type)
+    expect(tipos).toContain('transferred')
+    expect(tipos.filter((t) => t === 'assigned')).toHaveLength(1)
+  })
+
+  it('transfer sem dono previo e conflito: "de X para Y" nao vira "de ninguem"', async () => {
+    const c = await novaConversa(A)
+    const r = await chamar(A.db, 'conversation_transfer', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+      p_to_user_id: A2.id,
+    })
+    expect(r.outcome).toBe('conflict')
+  })
+
+  it('transfer para quem nao e da clinica falha na FK composta', async () => {
+    const c = await novaConversa(A)
+    const assumida = await chamar(A.db, 'conversation_assign', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+    })
+    await expect(
+      chamar(A.db, 'conversation_transfer', {
+        p_conversation_id: c.id,
+        p_expected_version: assumida.conversation!.version as number,
+        p_to_user_id: B.userId,
+      }),
+    ).rejects.toThrow(/foreign key|conversations_assignee_fk/i)
+  })
+
+  it('release devolve a conversa a fila', async () => {
+    const c = await novaConversa(A)
+    const assumida = await chamar(A.db, 'conversation_assign', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+    })
+    const r = await chamar(A.db, 'conversation_release', {
+      p_conversation_id: c.id,
+      p_expected_version: assumida.conversation!.version as number,
+    })
+    expect(r.outcome).toBe('ok')
+    expect(r.conversation!.assignedTo).toBeNull()
+    expect((await eventos(c.id)).map((e) => e.event_type)).toContain('released')
+  })
+
+  it('link e unlink de paciente geram os dois eventos', async () => {
+    const c = await novaConversa(A)
+    const ligada = await chamar(A.db, 'conversation_link_patient', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+      p_patient_id: A.patientId,
+    })
+    expect(ligada.conversation!.patientId).toBe(A.patientId)
+
+    const solta = await chamar(A.db, 'conversation_unlink_patient', {
+      p_conversation_id: c.id,
+      p_expected_version: ligada.conversation!.version as number,
+    })
+    expect(solta.conversation!.patientId).toBeNull()
+
+    const tipos = (await eventos(c.id)).map((e) => e.event_type)
+    // Aqui os eventos existem porque houve DUAS operacoes de verdade —
+    // diferente da conversa que ja nasce vinculada.
+    expect(tipos).toEqual(['conversation_created', 'patient_linked', 'patient_unlinked'])
+  })
+
+  it('conflito nao devolve estado a quem perdeu o vinculo', async () => {
+    const { id: efemeroId, db: efemeroDb } = await novoUsuario('efemero')
+    await admin
+      .from('clinic_members')
+      .insert({ clinic_id: A.clinicId, user_id: efemeroId, role: 'attendant' })
+
+    const c = await novaConversa(A)
+    await chamar(A.db, 'conversation_assign', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+    })
+
+    await admin
+      .from('clinic_members')
+      .delete()
+      .eq('clinic_id', A.clinicId)
+      .eq('user_id', efemeroId)
+
+    // Versao stale: seria conflito se ainda houvesse vinculo. Sem vinculo tem
+    // que ser not_found — o 409 nao pode virar canal de vazamento de estado.
+    const r = await chamar(efemeroDb, 'conversation_assign', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+    })
+    expect(r.outcome).toBe('not_found')
+    expect(r.conversation).toBeUndefined()
+  })
+})
+
+/* ===========================================================================
+   Proveniencia de agendamento
+   ======================================================================== */
+describe('proveniencia de agendamento', () => {
+  it('conversation_log_appointment NAO e executavel por authenticated', async () => {
+    const { error } = await A.db.rpc('conversation_log_appointment', {
+      p_conversation_id: A.conversationId,
+      p_appointment_id: randomUUID(),
+    })
+    // Ela prova que o agendamento e desta clinica, mas nao que ele NASCEU desta
+    // conversa. Exposta, viraria log auditavel feito de afirmacao do cliente.
+    expect(error).not.toBeNull()
+    expect(`${error!.message} ${error!.code ?? ''}`).toMatch(/permission denied|PGRST202|404/i)
+  })
+})
+
 describe('nivel HTTP', () => {
   it.todo('404 de conversa de outro tenant e byte a byte igual ao de UUID inexistente')
   it.todo('X-Clinic-Id forjado nao devolve nenhum campo de dado do outro tenant')

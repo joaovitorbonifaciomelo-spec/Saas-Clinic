@@ -24,6 +24,9 @@ const TABLES = [
   'services',
   'professional_availability',
   'appointments',
+  'conversations',
+  'messages',
+  'conversation_events',
 ]
 
 /** Matriz planejada: a mesma da migration 0003 (policies) e 0006 (grants). */
@@ -36,7 +39,11 @@ const EXPECTED = {
     professionals: ['SELECT', 'INSERT', 'UPDATE'],
     services: ['SELECT', 'INSERT', 'UPDATE'],
     professional_availability: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
-    appointments: ['SELECT', 'INSERT', 'UPDATE'],
+    // Atendimento: LE e nao ESCREVE. Toda escrita passa por funcao controlada,
+    // porque um GRANT nao consegue expressar invariante (ver 0014).
+    conversations: ['SELECT'],
+    messages: ['SELECT'],
+    conversation_events: ['SELECT'],
   },
   anon: {
     profiles: [],
@@ -47,6 +54,9 @@ const EXPECTED = {
     services: [],
     professional_availability: [],
     appointments: [],
+    conversations: [],
+    messages: [],
+    conversation_events: [],
   },
 }
 
@@ -165,7 +175,7 @@ const publicGrants = await client.query(
   [TABLES],
 )
 if (publicGrants.rows.length === 0) {
-  console.log('    nenhum privilegio concedido a PUBLIC nas 4 tabelas (OK)')
+  console.log(`    nenhum privilegio concedido a PUBLIC nas ${TABLES.length} tabelas (OK)`)
 } else {
   for (const row of publicGrants.rows) fail(`PUBLIC tem ${row.privilege_type} em ${row.table_name}`)
 }
@@ -255,6 +265,9 @@ const EXPECTED_POLICIES_BY_TABLE = {
   services: 3,
   professional_availability: 4,
   appointments: 3,
+  conversations: 1,
+  messages: 1,
+  conversation_events: 1,
 }
 
 console.log('')
@@ -265,6 +278,55 @@ for (const table of TABLES) {
   if (actual !== expected) {
     fail(`${table}: esperadas ${expected} policies, encontradas ${actual}`)
   }
+}
+
+// --- EXECUTE nas funcoes do Atendimento --------------------------------------
+/**
+ * O default do PostgreSQL concede EXECUTE a PUBLIC em toda funcao nova. Uma
+ * funcao que deveria ser interna fica exposta por omissao, nao por engano
+ * visivel — por isso a lista negativa importa tanto quanto a positiva.
+ */
+const EXPOSED_FUNCTIONS = [
+  'conversation_create_manual',
+  'conversation_add_manual_message',
+  'conversation_assign',
+  'conversation_transfer',
+  'conversation_release',
+  'conversation_set_status',
+  'conversation_link_patient',
+  'conversation_unlink_patient',
+]
+const INTERNAL_FUNCTIONS = [
+  'conversation_log_appointment',
+  'conversation_row_json',
+  'message_row_json',
+  'conversation_conflict',
+]
+
+console.log('')
+console.log('  EXECUTE NAS FUNCOES DO ATENDIMENTO')
+console.log('  ' + '-'.repeat(64))
+const fns = await client.query(
+  `select p.proname, p.oid::regprocedure::text as sig,
+          has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec,
+          has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec
+     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = any($1)
+    order by p.proname`,
+  [[...EXPOSED_FUNCTIONS, ...INTERNAL_FUNCTIONS]],
+)
+for (const row of fns.rows) {
+  const esperado = EXPOSED_FUNCTIONS.includes(row.proname)
+  console.log(
+    `    ${row.proname.padEnd(34)} authenticated=${row.auth_exec ? 'SIM' : 'nao'}  anon=${row.anon_exec ? 'SIM' : 'nao'}  (esperado ${esperado ? 'exposta' : 'INTERNA'})`,
+  )
+  if (esperado && !row.auth_exec) fail(`${row.proname} deveria ser executavel por authenticated`)
+  if (!esperado && row.auth_exec) fail(`${row.proname} NAO deveria estar exposta a authenticated`)
+  if (row.anon_exec) fail(`${row.proname} executavel por anon`)
+}
+for (const nome of [...EXPOSED_FUNCTIONS, ...INTERNAL_FUNCTIONS]) {
+  if (!fns.rows.some((r) => r.proname === nome)) fail(`funcao ausente no banco: ${nome}`)
 }
 
 // --- Trigger em auth.users ---------------------------------------------------
