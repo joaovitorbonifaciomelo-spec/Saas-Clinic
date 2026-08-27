@@ -620,44 +620,42 @@ export class ConversationsService {
   }
 
   /**
-   * Nome de quem atende, para os ids desta pagina — UMA consulta, nunca uma por
-   * linha.
+   * Nome de quem atende, resolvido pelo DIRETORIO DA EQUIPE.
    *
-   * POR QUE VEM DA AUDITORIA E NAO DE `profiles`: a policy de `profiles` e
-   * `id = auth.uid()`, entao ninguem le o nome de um colega, e `clinic_members`
-   * nao guarda nome. O que existe hoje sao os snapshots que as proprias funcoes
-   * de controle gravam em `conversation_events` — dados que este usuario ja
-   * pode ler, da clinica dele.
+   * ANTES vinha do snapshot mais recente em `conversation_events`. Funcionava,
+   * mas eventos sao registro historico do que ACONTECEU, nao read model do
+   * estado ATUAL: quem nunca agiu na clinica nao tinha nome, e uma pessoa que
+   * mudasse o nome so aparecia atualizada apos a proxima acao dela.
    *
-   * LIMITACAO ASSUMIDA: quem nunca agiu na clinica nao tem snapshot, e o nome
-   * sai nulo. Por isso o DTO carrega `assignedToIsMe` separado, que nunca
-   * depende disso. A correcao de verdade e uma coluna de snapshot em
-   * `conversations`, gravada no assign/transfer — mudanca de banco, fora deste
-   * bloco.
+   * AGORA `clinic_member_directory` le `profiles` por dentro, como SECURITY
+   * DEFINER, depois de validar o membership de quem pergunta. Isso resolve o
+   * nome de qualquer membro — inclusive de quem acabou de entrar na equipe e
+   * ainda nao fez nada.
+   *
+   * CUSTO: UMA chamada por requisicao, independente do tamanho da pagina. O
+   * diretorio vem inteiro e o mapeamento e em memoria; buscar nome por
+   * conversa seria N+1.
+   *
+   * `display_name` pode ser nulo quando a linha de perfil nao existe. Nulo aqui
+   * significa "nome indisponivel", NUNCA "sem responsavel" — para isso existe
+   * `assignedTo`, e `assignedToIsMe` nunca depende deste caminho.
    */
   private async resolveAssigneeNames(
     clinicId: string,
     ids: (string | null)[],
   ): Promise<Map<string, string>> {
-    const alvos = [...new Set(ids.filter((id): id is string => id !== null))]
     const nomes = new Map<string, string>()
-    if (alvos.length === 0) return nomes
+    // Nenhum responsavel nesta pagina: nao ha o que resolver, e a chamada seria
+    // desperdicio. A fila de "novas" cai exatamente neste caso.
+    if (ids.every((id) => id === null)) return nomes
 
-    const { data, error } = await this.supabase
-      .from('conversation_events')
-      .select('actor_user_id, actor_name_snapshot, created_at')
-      .eq('clinic_id', clinicId)
-      .in('actor_user_id', alvos)
-      .not('actor_name_snapshot', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(alvos.length * 20)
-
+    const { data, error } = await this.supabase.rpc('clinic_member_directory', {
+      p_clinic_id: clinicId,
+    })
     if (error) throw mapPostgrestError(error)
 
-    // Ordenado do mais recente para o mais antigo: o primeiro que aparece por
-    // usuario e o snapshot mais novo que temos dele.
-    for (const linha of (data ?? []) as { actor_user_id: string; actor_name_snapshot: string }[]) {
-      if (!nomes.has(linha.actor_user_id)) nomes.set(linha.actor_user_id, linha.actor_name_snapshot)
+    for (const membro of (data ?? []) as { user_id: string; display_name: string | null }[]) {
+      if (membro.display_name !== null) nomes.set(membro.user_id, membro.display_name)
     }
     return nomes
   }

@@ -41,7 +41,7 @@ let bob: TestActor
 let apiOnline = false
 
 /** Segundo membro da clinica de Alice: sem ele nao da para testar `unassigned`. */
-let carol: { userId: string; accessToken: string }
+let carol: { userId: string; accessToken: string; db: SupabaseClient }
 
 interface Resposta {
   status: number
@@ -163,7 +163,11 @@ beforeAll(async () => {
     email: emailCarol,
     password: senhaCarol,
   })
-  carol = { userId: criada.user.id, accessToken: sessaoCarol!.session!.access_token }
+  carol = {
+    userId: criada.user.id,
+    accessToken: sessaoCarol!.session!.access_token,
+    db: dbCarol,
+  }
 
   // --- conversas de A, criadas em ordem crescente de atividade ---------------
   const agora = Date.now()
@@ -639,5 +643,127 @@ describe('eventos', () => {
     expect(page.items[0]).not.toHaveProperty('clinicId')
     expect(page.items[0]).not.toHaveProperty('conversationId')
     expect(page.items[0]).not.toHaveProperty('actorUserId')
+  })
+})
+
+/* ===========================================================================
+   Diretorio da equipe
+   ======================================================================== */
+describe('diretorio da equipe', () => {
+  it('membro enxerga a equipe da propria clinica, com nome vindo de profiles', async () => {
+    const { data, error } = await alice.db.rpc('clinic_member_directory', {
+      p_clinic_id: alice.clinicId,
+    })
+    expect(error).toBeNull()
+    const equipe = data as { user_id: string; display_name: string | null; role: string }[]
+
+    const daAlice = equipe.find((m) => m.user_id === alice.userId)
+    expect(daAlice?.display_name).toBe('Usuario ATEND-A')
+    expect(daAlice?.role).toBe('admin')
+
+    const daCarol = equipe.find((m) => m.user_id === carol.userId)
+    expect(daCarol?.display_name).toBe('Usuaria CAROL')
+    expect(daCarol?.role).toBe('attendant')
+  })
+
+  it('o SEGUNDO membro enxerga a mesma equipe', async () => {
+    const { data } = await carol.db.rpc('clinic_member_directory', {
+      p_clinic_id: alice.clinicId,
+    })
+    const ids = (data as { user_id: string }[]).map((m) => m.user_id).sort()
+    expect(ids).toEqual([alice.userId, carol.userId].sort())
+  })
+
+  it('quem e de outra clinica recebe CONJUNTO VAZIO, nao erro', async () => {
+    const { data, error } = await bob.db.rpc('clinic_member_directory', {
+      p_clinic_id: alice.clinicId,
+    })
+    // Vazio e nao excecao: um erro diferente ja seria a confirmacao de que a
+    // clinica existe.
+    expect(error).toBeNull()
+    expect(data).toEqual([])
+  })
+
+  it('mandar o clinic_id do outro tenant nao ajuda em nada', async () => {
+    // p_clinic_id e dado do cliente e nao vale como prova: quem decide e
+    // is_clinic_member(auth.uid()), por dentro da funcao.
+    const { data: alheia } = await alice.db.rpc('clinic_member_directory', {
+      p_clinic_id: bob.clinicId,
+    })
+    const { data: inexistente } = await alice.db.rpc('clinic_member_directory', {
+      p_clinic_id: UUID_INEXISTENTE,
+    })
+    expect(alheia).toEqual([])
+    // Mesma resposta para "nao e sua" e "nao existe".
+    expect(alheia).toEqual(inexistente)
+  })
+
+  it('anon nao tem EXECUTE', async () => {
+    const anon = createAnonClient(env)
+    const { error } = await anon.rpc('clinic_member_directory', { p_clinic_id: alice.clinicId })
+    expect(error).not.toBeNull()
+  })
+
+  it('devolve exatamente tres colunas — sem email, sem metadados', async () => {
+    const { data } = await alice.db.rpc('clinic_member_directory', {
+      p_clinic_id: alice.clinicId,
+    })
+    for (const membro of data as Record<string, unknown>[]) {
+      expect(Object.keys(membro).sort()).toEqual(['display_name', 'role', 'user_id'])
+    }
+  })
+
+  it('resolve o nome de quem esta atribuido mas NUNCA agiu', async () => {
+    /*
+     * ESTE E O TESTE QUE JUSTIFICA A MUDANCA.
+     *
+     * A conversa e transferida PARA Carol POR Alice: o evento registra Alice
+     * como ator, e Carol nao tem evento proprio nenhum. Pelo caminho antigo —
+     * inferir o nome do snapshot mais recente em conversation_events — o nome
+     * de Carol seria irresolvivel, e a fila mostraria a conversa como se nao
+     * tivesse responsavel.
+     */
+    const c = await criarConversa(alice, { nome: 'Transferida para quem nunca agiu' })
+    const { data: assumida } = await alice.db.rpc('conversation_assign', {
+      p_conversation_id: c.id,
+      p_expected_version: c.version,
+    })
+    const versao = (assumida as { conversation: { version: number } }).conversation.version
+    await alice.db.rpc('conversation_transfer', {
+      p_conversation_id: c.id,
+      p_expected_version: versao,
+      p_to_user_id: carol.userId,
+    })
+
+    // Carol realmente nao deixou rastro nenhum nesta conversa.
+    const { data: eventos } = await admin
+      .from('conversation_events')
+      .select('actor_user_id')
+      .eq('conversation_id', c.id)
+    expect((eventos ?? []).every((e) => e.actor_user_id !== carol.userId)).toBe(true)
+
+    const r = await comoAlice(`/conversations/${c.id}`)
+    const detalhe = r.json as ConversationDetail
+    expect(detalhe.assignedTo).toBe(carol.userId)
+    expect(detalhe.assignedToName).toBe('Usuaria CAROL')
+    expect(detalhe.assignedToIsMe).toBe(false)
+
+    // E na listagem tambem.
+    const lista = await comoAlice('/conversations?limit=100')
+    const item = (lista.json as Page<ConversationListItem>).items.find((i) => i.id === c.id)!
+    expect(item.assignedToName).toBe('Usuaria CAROL')
+  })
+
+  it('toda conversa com responsavel tem nome resolvido — sem N+1', async () => {
+    // O diretorio e carregado UMA vez por requisicao e mapeado em memoria;
+    // buscar nome por conversa seria N+1.
+    const r = await comoAlice('/conversations?limit=100')
+    const comDono = (r.json as Page<ConversationListItem>).items.filter(
+      (i) => i.assignedTo !== null,
+    )
+    expect(comDono.length).toBeGreaterThan(0)
+    for (const item of comDono) {
+      expect(item.assignedToName, `sem nome: ${item.id}`).not.toBeNull()
+    }
   })
 })

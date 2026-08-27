@@ -338,12 +338,19 @@ const EXPOSED_FUNCTIONS = [
   'conversation_set_status',
   'conversation_link_patient',
   'conversation_unlink_patient',
+  // Diretorio da equipe: leitura/UX. A autorizacao real continua na FK e nas
+  // funcoes de controle; este so devolve nome para a tela.
+  'clinic_member_directory',
 ]
 const INTERNAL_FUNCTIONS = [
   'conversation_log_appointment',
   'conversation_row_json',
   'message_row_json',
   'conversation_conflict',
+  // Predicado e trigger de occurred_at: sao a autoridade, e ninguem os chama
+  // de fora. Expostos, so dariam superficie sem utilidade.
+  'message_occurred_at_ok',
+  'reject_future_occurred_at',
 ]
 
 console.log('')

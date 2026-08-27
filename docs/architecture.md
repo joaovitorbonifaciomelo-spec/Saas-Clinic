@@ -289,105 +289,130 @@ nenhuma mensagem real posterior desfaça**. A API aceita até
 `OCCURRED_AT_FUTURE_TOLERANCE_MS` (5 min) de folga, apenas para relógio de
 cliente adiantado.
 
-> ⚠️ **Esta proteção hoje existe SÓ na API.** `authenticated` tem EXECUTE em
-> `conversation_add_manual_message` e pode chamá-la direto, fora da API, com
-> `occurred_at` arbitrário. Verificado contra o Dev: aceito, e a conversa foi
-> para o topo da fila. Ver "Riscos conhecidos" abaixo.
+> A mesma regra vale no banco desde a migration 0018 — ver §6.2. A validação
+> aqui existe para o erro 400 amigável, não como barreira.
 
 ---
 
-## 6.2 Riscos conhecidos e decisões pendentes — Atendimento
+## 6.2 Atendimento: o que foi fechado e o que segue aberto
 
-Três itens abertos, **nenhum resolvido nesta rodada**, todos aguardando decisão.
-Estão aqui para não virarem descoberta futura.
+### ✅ FECHADO — `occurred_at` no futuro (migrations 0018/0019)
 
-### 1. `occurred_at` futuro é aceito pelo BANCO (não só pela API) — ALTO
+**Era:** `authenticated` chamava `conversation_add_manual_message` direto, fora da
+API, com `occurred_at` arbitrário. Verificado contra o Dev: ano 2999 aceito,
+`last_message_at` em 2999, conversa presa no topo da fila — e como o trigger de
+atividade usa `greatest()`, que nunca reduz, nenhuma mensagem real posterior
+corrigia.
 
-**Comportamento atual, verificado contra o Dev.** `authenticated` tem EXECUTE em
-`conversation_add_manual_message`. Chamando-a direto, sem passar pela API:
+**Regra, agora no banco:**
 
-```
-p_occurred_at = '2999-01-01'  ->  ACEITO
-messages.occurred_at          =  2999-01-01
-conversations.last_message_at =  2999-01-01
-topo da fila                  =  a conversa do futuro
-```
+| `occurred_at` | Resultado |
+|---|---|
+| omitido | `now()` do servidor |
+| passado | aceito — é para isso que o modo manual existe |
+| até `now() + 5 min` | aceito, para relógio de cliente adiantado |
+| acima de `now() + 5 min` | **recusado** |
 
-**Por que importa.** A fila ordena por `last_message_at DESC`, e o trigger o
-atualiza com `greatest(last_message_at, new.occurred_at)`. Como `greatest()`
-nunca reduz, **nenhuma mensagem real posterior corrige o valor**: a conversa fica
-presa no topo permanentemente, e só um UPDATE administrativo desfaz.
+**Onde vive.** Trigger `BEFORE INSERT` em `messages`
+(`a_messages_reject_future_occurred_at`), que roda em **todo** caminho de
+inserção — a RPC de hoje, o adaptador de provedor de amanhã, o script
+administrativo. O predicado `message_occurred_at_ok` é a fonte única, usada
+pelo trigger e pela RPC, para os dois não divergirem.
 
-**Por que a API não basta.** A validação de 5 minutos vive no schema zod, que só
-roda no caminho HTTP. A RPC é executável diretamente por qualquer usuário
-autenticado — a mesma propriedade que torna o modelo de escrita seguro
-(o banco é a autoridade) faz da API um lugar insuficiente para esta regra.
+**Por que não um CHECK.** Um CHECK que chama `now()` não é imutável. O
+PostgreSQL aceita criar, mas a constraint passa a valer sobre um valor que muda:
+uma linha válida hoje seria inválida numa revalidação amanhã, e
+`ALTER TABLE ... VALIDATE` ou um restore poderiam falhar sobre dados que sempre
+estiveram corretos. Regra que depende do relógio pertence ao momento da escrita.
 
-**Solução proposta** (migration, NÃO aplicada):
+**Erro reconhecível, não SQL genérico.** A RPC devolve
+`{outcome: 'invalid_occurred_at'}`, no mesmo formato de `not_manual` e
+`invalid_body`, e a API mapeia para 400. Quem insere por fora da RPC recebe
+`MESSAGE_OCCURRED_AT_IN_FUTURE` com errcode `22023`, que `mapPostgrestError` já
+traduz para 400 — nunca um 500 genérico.
 
-```sql
-alter table public.messages
-  add constraint messages_occurred_at_not_future
-  check (occurred_at <= now() + interval '5 minutes');
-```
+**Atomicidade.** Sendo `BEFORE INSERT`, nada chega a ser gravado: sem mensagem,
+sem evento, `last_message_at` intocado, versão intocada. O harness afirma os
+quatro.
 
-Com uma ressalva a decidir junto: `now()` **não é imutável**, então um CHECK
-assim é aceito pelo PostgreSQL mas só é avaliado na escrita — o que é
-exatamente o que queremos aqui, e vale registrar que isso torna a constraint
-não-revalidável em `ALTER TABLE ... VALIDATE`. A alternativa é mover a
-verificação para o trigger `stamp_message_defaults`, que já roda em toda
-inserção e pode recusar com mensagem própria.
+> **Nota da 0019.** A 0018 criou o trigger sem `SECURITY DEFINER`, e trigger
+> comum executa com os privilégios de quem disparou o INSERT. Como o predicado
+> está revogado de todos os papéis (lista positiva), inserções fora de uma
+> função definer falhavam com *permission denied for function
+> message_occurred_at_ok* — recusa pelo motivo errado, que também barraria um
+> `occurred_at` válido. Um teste que insere como `service_role` revelou. O
+> trigger passou a ser `SECURITY DEFINER`: invariante de dados vale igual para
+> todo caminho de escrita, e a resposta tem que ser sobre o dado, não sobre
+> grants.
 
-**Impacto de não fazer:** um membro da clínica consegue fixar uma conversa no
-topo da fila da própria clínica. Não cruza tenant e não vaza dado — é
-sabotagem interna da ordenação, não brecha de isolamento.
+### ✅ FECHADO — nome do responsável (migration 0018)
 
-### 2. Idempotência de POST manual — MÉDIO, aceito na v0.1
+**Era:** inferido do snapshot mais recente em `conversation_events`. Eventos são
+registro histórico do que **aconteceu**, não read model do estado **atual**: quem
+nunca agiu na clínica não tinha nome, e uma pessoa que trocasse o nome só
+aparecia atualizada após a próxima ação dela.
 
-**Não há deduplicação, e isso é deliberado.** "Olá" registrado duas vezes pode
-ser um fato real: a pessoa ligou duas vezes. Deduplicar por conteúdo apagaria
-informação verdadeira, e o teste
-*"duas mensagens identicas continuam sendo duas mensagens"* fixa esse
-comportamento.
+**Agora:** `clinic_member_directory(p_clinic_id)` — `SECURITY DEFINER`, devolve
+`user_id`, `display_name`, `role`. Três colunas porque a operação precisa de
+três: identificar, exibir, e diferenciar papéis na UI.
 
-O risco real é outro: **retry ou duplo clique**. Se a rede cair depois de o
-banco gravar e antes de a resposta chegar, o cliente reenvia e a mensagem entra
-duas vezes. Hoje nada impede.
+**Não-disclosure.** `p_clinic_id` é dado do cliente e **não** vale como prova.
+Quem decide é `is_clinic_member(p_clinic_id)`, que usa `auth.uid()`. Quem não é
+membro recebe **conjunto vazio** — idêntico ao de uma clínica inexistente. Sem
+exceção, sem mensagem diferente, portanto sem como distinguir "não é sua" de
+"não existe".
 
-**Solução se decidirmos garantir de verdade:** `client_message_id` enviado pelo
-cliente e persistido com índice único por clínica — o mesmo formato do
-`messages_provider_dedup_key` que já existe para provedores externos. Exige
-migration.
+**Por que não afrouxar `profiles`.** A policy `profiles_select_own` protege mais
+que o nome. Abri-la para colegas exporia a linha inteira do perfil a todo membro
+de qualquer clínica compartilhada, para sempre, em troca de um campo. A função
+definer devolve exatamente as três colunas e nada mais.
 
-**Tradeoff.** A garantia só é real se o identificador for persistido; um
-`Idempotency-Key` guardado em memória do processo não sobrevive a restart nem
-funciona com mais de uma instância. Ou seja: ou migration, ou nada — não há
-meio-termo honesto.
+**Grants:** `authenticated` tem EXECUTE. `PUBLIC` e `anon` não.
 
-**Por que é aceitável até o frontend:** a consequência é uma linha duplicada
-numa thread, visível e corrigível por quem registrou; não há efeito externo
-porque **nada é enviado**. Quando o frontend existir, ele deve desabilitar o
-botão durante o POST, o que remove o caso comum. A decisão de persistir o
-identificador fica para quando houver canal externo de verdade — aí uma
-duplicata custa uma mensagem enviada ao paciente, e o cálculo muda.
+**Leitura/UX, não autorização.** Quem pode receber uma transferência continua
+sendo decidido pela FK composta `(clinic_id, assigned_to) -> clinic_members`,
+dentro de `conversation_transfer`. Se o diretório ficar desatualizado, o pior
+caso é uma opção que o banco recusa — nunca uma transferência indevida aceita.
 
-### 3. Nome do responsável vem da auditoria — MÉDIO, temporário
+**`display_name` nulo.** `profiles.full_name` é NOT NULL e o trigger
+`handle_new_user` cria o perfil junto do usuário, então o caso normal sempre tem
+nome. O nulo cobre a linha de perfil ausente. O LEFT JOIN é deliberado: sumir com
+o membro seria pior que exibi-lo sem nome — ele sumiria também do seletor de
+transferência, e uma conversa atribuída a ele apareceria sem responsável. **Nulo
+significa "nome indisponível", nunca "sem responsável"** — para isso existe
+`assignedTo`, e `assignedToIsMe` nunca depende deste caminho.
 
-`ConversationListItem.assignedToName` e `ConversationDetail.assignedToName` são
-resolvidos lendo o snapshot mais recente em `conversation_events`. Funciona,
-custa uma consulta por página, e **não é uma fonte adequada**: eventos são
-registro histórico do que aconteceu, não read model do estado atual. Quem nunca
-agiu na clínica não tem snapshot e sai com nome nulo.
+**Custo:** uma chamada por requisição, mapeada em memória. Medido com 40
+conversas e equipe de 6: `limit=5` → 228ms, `limit=40` → 231ms (**1,01x**), com
+40/40 responsáveis resolvidos — todos transferidos para pessoas que nunca
+agiram, exatamente onde o caminho por eventos falhava.
 
-A causa é que a policy de `profiles` é `id = auth.uid()` e `clinic_members` não
-guarda nome — ninguém lê o nome de um colega.
+### ⚠️ ABERTO — idempotência de POST manual
 
-**Decisão pendente, antes do Bloco 3 / frontend:** escolher um read model seguro
-para membros da clínica. As opções na mesa são uma coluna
-`assigned_to_name_snapshot` em `conversations` (gravada no assign/transfer) ou
-uma view/policy que exponha nome de co-membros da mesma clínica. Ambas são
-mudança de banco. Enquanto isso, `assignedToIsMe` é o campo confiável e nunca
-depende do fallback.
+**Decisão registrada: a v0.1 aceita o risco.**
+
+Não há deduplicação por conteúdo, e isso é deliberado: "Olá" registrado duas
+vezes pode ser um fato real — a pessoa ligou duas vezes. Deduplicar por conteúdo
+apagaria informação verdadeira.
+
+O risco é retry ou duplo clique: se a rede cair depois de o banco gravar e antes
+de a resposta chegar, o cliente reenvia e a mensagem entra duas vezes.
+
+**Por que é aceitável agora:** nada é enviado externamente, a duplicidade é
+visível na thread e corrigível por quem registrou, e o conteúdo não serve como
+chave.
+
+**O frontend deve bloquear duplo clique enquanto o POST estiver pendente. Isso
+reduz o caso comum, mas NÃO é garantia de idempotência** — não cobre retry de
+rede nem duas abas.
+
+> **Reavaliação OBRIGATÓRIA antes de qualquer provider real.** Com canal externo,
+> uma duplicata custa uma mensagem entregue ao paciente, e o cálculo muda por
+> completo. A solução é `client_message_id` enviado pelo cliente e **persistido**
+> com índice único por clínica — o mesmo formato do `messages_provider_dedup_key`
+> que já existe para provedores. Exige migration. Não há meio-termo honesto: um
+> `Idempotency-Key` guardado em memória do processo não sobrevive a restart nem
+> funciona com mais de uma instância.
 
 ---
 

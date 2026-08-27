@@ -577,6 +577,186 @@ try {
     return new Date(rows[0].last_message_at).getTime() === new Date(agora).getTime()
   })
 
+  // ------------------------------- 6.5 occurred_at nao pode estar no futuro
+  console.log('')
+  console.log('  === 6.5 occurred_at ===')
+  console.log('')
+
+  await afirma('timestamp historico e aceito', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const ontem = new Date(Date.now() - 24 * 3600_000).toISOString()
+    const r = await novaMensagem(userA, c.id, 'inbound', 'ligou ontem', ontem)
+    return r.outcome === 'ok'
+  })
+
+  await afirma('now() + 4 minutos e aceito (relogio do cliente adiantado)', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const t = new Date(Date.now() + 4 * 60_000).toISOString()
+    const r = await novaMensagem(userA, c.id, 'inbound', 'quatro minutos', t)
+    return r.outcome === 'ok'
+  })
+
+  await afirma('now() + 6 minutos e recusado', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const t = new Date(Date.now() + 6 * 60_000).toISOString()
+    const r = await novaMensagem(userA, c.id, 'inbound', 'seis minutos', t)
+    return r.outcome === 'invalid_occurred_at'
+  })
+
+  await afirma('ano 2999 e recusado pela RPC', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const r = await novaMensagem(userA, c.id, 'inbound', 'do futuro', '2999-01-01T00:00:00Z')
+    return r.outcome === 'invalid_occurred_at'
+  })
+
+  await afirma('a recusa nao deixa rastro: sem mensagem, sem evento, sem atividade', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const antes = await db.query(
+      `select last_message_at, last_inbound_at, version from public.conversations where id = $1`,
+      [c.id],
+    )
+    const eventosAntes = await db.query(
+      `select count(*)::int as n from public.conversation_events where conversation_id = $1`,
+      [c.id],
+    )
+
+    await novaMensagem(userA, c.id, 'inbound', 'do futuro', '2999-01-01T00:00:00Z')
+
+    const depois = await db.query(
+      `select last_message_at, last_inbound_at, version from public.conversations where id = $1`,
+      [c.id],
+    )
+    const mensagens = await db.query(
+      `select count(*)::int as n from public.messages where conversation_id = $1`,
+      [c.id],
+    )
+    const eventosDepois = await db.query(
+      `select count(*)::int as n from public.conversation_events where conversation_id = $1`,
+      [c.id],
+    )
+
+    return (
+      mensagens.rows[0].n === 0 &&
+      eventosDepois.rows[0].n === eventosAntes.rows[0].n &&
+      depois.rows[0].last_message_at === antes.rows[0].last_message_at &&
+      depois.rows[0].last_inbound_at === antes.rows[0].last_inbound_at &&
+      depois.rows[0].version === antes.rows[0].version
+    )
+  })
+
+  await afirmaRecusa(
+    'nem o DONO DA TABELA insere mensagem no futuro',
+    async () => {
+      const c = await novaConversa(userA, clinicA)
+      await db.query(
+        `insert into public.messages (clinic_id, conversation_id, direction, body, occurred_at)
+         values ($1,$2,'inbound','contornando','2999-01-01T00:00:00Z')`,
+        [clinicA, c.id],
+      )
+    },
+    // O trigger e a autoridade: vale para qualquer caminho de insercao, nao so
+    // para a RPC. Este e o teste que prova isso.
+    'MESSAGE_OCCURRED_AT_IN_FUTURE',
+  )
+
+  // ------------------------------------- 6.6 diretorio da equipe da clinica
+  console.log('')
+  console.log('  === 6.6 Diretorio da equipe ===')
+  console.log('')
+
+  await afirma('membro enxerga a equipe da propria clinica', async () => {
+    const { rows } = await comoUsuario(userA, () =>
+      db.query(`select * from public.clinic_member_directory($1)`, [clinicA]),
+    )
+    return rows.length >= 1 && rows.every((r) => r.user_id !== null)
+  })
+
+  await afirma('o nome vem de profiles, nao do cliente', async () => {
+    await db.query(`update public.profiles set full_name = 'Nome Confiavel' where id = $1`, [
+      userA,
+    ])
+    const { rows } = await comoUsuario(userA, () =>
+      db.query(`select display_name from public.clinic_member_directory($1) where user_id = $2`, [
+        clinicA,
+        userA,
+      ]),
+    )
+    return rows[0].display_name === 'Nome Confiavel'
+  })
+
+  await afirma('membro SEM perfil aparece com display_name nulo, e nao some', async () => {
+    const { rows: u } = await db.query(
+      `insert into auth.users (email) values ('sem-perfil@example.test') returning id`,
+    )
+    const semNome = u[0].id
+    // profiles.full_name e NOT NULL, entao "sem nome" so existe como "sem
+    // LINHA de perfil" — perfil apagado a mao ou membership criada antes dele.
+    await db.query(`delete from public.profiles where id = $1`, [semNome])
+    await db.query(
+      `insert into public.clinic_members (clinic_id, user_id, role) values ($1,$2,'attendant')`,
+      [clinicA, semNome],
+    )
+
+    const { rows } = await comoUsuario(userA, () =>
+      db.query(`select display_name from public.clinic_member_directory($1) where user_id = $2`, [
+        clinicA,
+        semNome,
+      ]),
+    )
+    // Some-lo seria pior: sumiria do seletor de transferencia e a conversa
+    // dele apareceria sem responsavel.
+    return rows.length === 1 && rows[0].display_name === null
+  })
+
+  await afirma('clinica alheia devolve CONJUNTO VAZIO, nao erro', async () => {
+    const { rows } = await comoUsuario(userA, () =>
+      db.query(`select * from public.clinic_member_directory($1)`, [clinicB]),
+    )
+    return rows.length === 0
+  })
+
+  await afirma('clinica inexistente e indistinguivel de clinica alheia', async () => {
+    const inexistente = await comoUsuario(userA, () =>
+      db.query(`select * from public.clinic_member_directory('00000000-0000-4000-8000-000000000000')`),
+    )
+    const alheia = await comoUsuario(userA, () =>
+      db.query(`select * from public.clinic_member_directory($1)`, [clinicB]),
+    )
+    // Mesma forma de resposta: nao da para descobrir que clinicB existe.
+    return inexistente.rows.length === 0 && alheia.rows.length === 0
+  })
+
+  await afirma('o diretorio nunca mistura membros de outra clinica', async () => {
+    const { rows } = await comoUsuario(userA, () =>
+      db.query(`select user_id from public.clinic_member_directory($1)`, [clinicA]),
+    )
+    const { rows: deB } = await db.query(
+      `select user_id from public.clinic_members where clinic_id = $1`,
+      [clinicB],
+    )
+    const idsB = new Set(deB.map((r) => r.user_id))
+    return rows.every((r) => !idsB.has(r.user_id))
+  })
+
+  await afirma('o diretorio devolve EXATAMENTE tres colunas', async () => {
+    // Le a assinatura declarada. Se alguem acrescentar email ou created_at ao
+    // RETURNS TABLE, esta afirmacao quebra antes de a coluna chegar ao cliente.
+    const { rows } = await db.query(
+      `select pg_get_function_result(p.oid) as assinatura
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = 'clinic_member_directory'`,
+    )
+    const assinatura = rows[0].assinatura.toLowerCase()
+    const proibidos = ['email', 'created_at', 'updated_at', 'phone', 'metadata']
+    return (
+      assinatura.includes('user_id') &&
+      assinatura.includes('display_name') &&
+      assinatura.includes('role') &&
+      proibidos.every((campo) => !assinatura.includes(campo))
+    )
+  })
+
   // ------------------------------------------------- 6. identidade
   console.log('\n  === 7. Identidade da thread ===\n')
 
