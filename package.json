@@ -25,7 +25,8 @@
     "db:push": "node scripts/db-push.mjs",
     "db:push:raw": "supabase db push",
     "db:diff": "supabase db diff",
-    "test:hint": "pnpm build:shared && vitest run --project hint"
+    "test:hint": "pnpm build:shared && vitest run --project hint",
+    "test:atendimento": "pnpm build:shared && vitest run --project atendimento"
   },
   "devDependencies": {
     "@clinicas/config": "workspace:*",
