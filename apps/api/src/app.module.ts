@@ -7,6 +7,7 @@ import { MeModule } from './me/me.module'
 import { ProfessionalsModule } from './professionals/professionals.module'
 import { ServicesModule } from './services/services.module'
 import { AppointmentsModule } from './appointments/appointments.module'
+import { ConversationsModule } from './conversations/conversations.module'
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { AppointmentsModule } from './appointments/appointments.module'
     ProfessionalsModule,
     ServicesModule,
     AppointmentsModule,
+    ConversationsModule,
   ],
   controllers: [HealthController],
 })

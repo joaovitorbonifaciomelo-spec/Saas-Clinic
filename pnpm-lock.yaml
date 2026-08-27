@@ -11,6 +11,9 @@ importers:
       '@clinicas/config':
         specifier: workspace:*
         version: link:packages/config
+      '@clinicas/shared':
+        specifier: workspace:*
+        version: link:packages/shared
       '@electric-sql/pglite':
         specifier: ^0.5.7
         version: 0.5.7

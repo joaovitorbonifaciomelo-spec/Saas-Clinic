@@ -45,10 +45,20 @@ export class ClinicMembershipGuard implements CanActivate {
       throw new ForbiddenException('Clinica ativa nao informada.')
     }
 
+    /*
+     * Filtrar por user_id NAO e redundante com o RLS, e a ausencia disso era um
+     * bug: a policy de "clinic_members" e "is_clinic_member(clinic_id)", ou
+     * seja, o usuario enxerga TODOS os colegas da clinica dele — nao apenas a
+     * propria linha. Sem este filtro, uma clinica com dois funcionarios devolvia
+     * duas linhas, "maybeSingle()" virava erro e o guard respondia 403 em toda rota
+     * de todo modulo. Passou despercebido porque ate entao nenhum teste tinha
+     * clinica com mais de um membro.
+     */
     const { data, error } = await this.supabase
       .from('clinic_members')
       .select('clinic_id, clinics ( timezone )')
       .eq('clinic_id', clinicId)
+      .eq('user_id', request.user!.id)
       .maybeSingle()
 
     if (error || !data) {

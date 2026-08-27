@@ -31,6 +31,7 @@
   },
   "devDependencies": {
     "@clinicas/config": "workspace:*",
+    "@clinicas/shared": "workspace:*",
     "@electric-sql/pglite": "^0.5.7",
     "@supabase/supabase-js": "2.112.4",
     "@types/node": "24.13.3",

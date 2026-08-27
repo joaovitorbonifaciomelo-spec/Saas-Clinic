@@ -803,9 +803,21 @@ describe('proveniencia de agendamento', () => {
   })
 })
 
-describe('nivel HTTP', () => {
-  it.todo('404 de conversa de outro tenant e byte a byte igual ao de UUID inexistente')
-  it.todo('X-Clinic-Id forjado nao devolve nenhum campo de dado do outro tenant')
+/*
+ * NIVEL HTTP
+ *
+ * Os dois primeiros pendentes viraram teste de verdade em
+ * `atendimento-api.test.ts`, junto do resto da API de leitura (Bloco 1):
+ *
+ *   - "404 de conversa de outro tenant e byte a byte igual ao de UUID
+ *      inexistente"  -> isolamento > conversa de outro tenant e 404 IDENTICO...
+ *   - "X-Clinic-Id forjado nao devolve nenhum campo de dado do outro tenant"
+ *                    -> isolamento > X-Clinic-Id forjado nao devolve dado...
+ *
+ * Os tres abaixo dependem dos endpoints de ESCRITA, que sao o Bloco 2. Ficam
+ * como pendencia declarada em vez de sumirem da lista.
+ */
+describe('nivel HTTP (escrita — Bloco 2)', () => {
   it.todo('outcome conflict do RPC vira 409 com o estado atual')
   it.todo('outcome not_found do RPC vira 404, nunca 409')
   it.todo('telefone ja existente em outra thread devolve erro explicado, nao 23505 cru')

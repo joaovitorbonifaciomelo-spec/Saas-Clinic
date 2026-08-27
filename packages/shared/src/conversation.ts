@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { ClinicRole } from './roles'
+import type { AppointmentStatus } from './appointment'
 
 /* =============================================================================
    Canal e provedor
@@ -292,6 +293,9 @@ export interface Conversation {
   updatedAt: string
 }
 
+/**
+ * Uma linha da fila. So o que a lista desenha — a thread inteira nunca vem aqui.
+ */
 export interface ConversationListItem
   extends Pick<
     Conversation,
@@ -304,19 +308,155 @@ export interface ConversationListItem
     | 'contactNameSnapshot'
     | 'lastMessageAt'
     | 'version'
+    | 'updatedAt'
   > {
-  /** Vem de join, nunca de coluna desnormalizada: nome muda. */
+  /**
+   * Nome de quem esta atendendo, quando foi possivel resolver.
+   *
+   * NULO NAO SIGNIFICA "sem responsavel" — para isso existe `assignedTo`.
+   * Significa que o nome nao foi resolvivel: a policy de `profiles` e
+   * `id = auth.uid()`, entao ninguem le o nome de um colega. O servidor
+   * recupera o que consegue dos snapshots de auditoria; quem nunca agiu na
+   * clinica ainda nao tem nome conhecido. Ver `assignedToIsMe`.
+   */
   assignedToName: string | null
+  /** Sempre confiavel, mesmo quando o nome nao resolve. A UI diz "Voce". */
+  assignedToIsMe: boolean
+  /** Vem de join, nunca de coluna desnormalizada: nome de paciente muda. */
   patientName: string | null
-  /** Resolvido no servidor — trazer a ultima mensagem inteira seria N+1. */
+  /** Resolvido no servidor com um unico join — trazer a thread seria N+1. */
   lastMessagePreview: string | null
+  lastMessageDirection: MessageDirection | null
+  /** Derivado de lastInboundAt > lastOutboundAt; ver needsReply(). */
   needsReply: boolean
 }
+
+/**
+ * Um paciente visto de dentro do Atendimento.
+ *
+ * Deliberadamente menor que `Patient`: a tela de conversa precisa identificar
+ * e ligar para a pessoa, nao editar o cadastro dela.
+ */
+export interface ConversationPatientSummary {
+  id: string
+  name: string
+  phone: string
+}
+
+/** Proxima consulta futura do paciente vinculado, quando existir. */
+export interface ConversationNextAppointment {
+  id: string
+  startsAt: string
+  endsAt: string
+  status: AppointmentStatus
+  professionalName: string | null
+  serviceName: string | null
+}
+
+/**
+ * A conversa aberta na tela. Ainda NAO traz mensagens: elas tem endpoint e
+ * paginacao proprios, porque uma thread longa nao cabe numa resposta so.
+ */
+export interface ConversationDetail extends Conversation {
+  assignedToName: string | null
+  assignedToIsMe: boolean
+  patient: ConversationPatientSummary | null
+  nextAppointment: ConversationNextAppointment | null
+  needsReply: boolean
+}
+
+/**
+ * Evento como a UI o le. `metadata` NAO e repassado cru: o banco aceita chaves
+ * que so fazem sentido para o servidor, e o que sai daqui e uma lista fechada.
+ */
+export interface ConversationEventView {
+  id: string
+  eventType: ConversationEventType
+  actorNameSnapshot: string | null
+  actorRoleSnapshot: ClinicRole | null
+  createdAt: string
+  /** Somente as chaves da lista branca; ver CONVERSATION_EVENT_METADATA_KEYS. */
+  metadata: ConversationEventMetadata
+}
+
+/**
+ * Chaves de metadata que podem sair para o cliente, por tipo de evento.
+ *
+ * Lista fechada de proposito. `metadata` e jsonb: hoje guarda o que as funcoes
+ * de controle escrevem, mas um adaptador futuro pode gravar ali payload de
+ * provedor. Repassar o objeto inteiro faria esse dia virar um vazamento
+ * silencioso, sem nenhuma linha de codigo mudando.
+ */
+export const CONVERSATION_EVENT_METADATA_KEYS = [
+  'from',
+  'to',
+  'reason',
+  'from_user_id',
+  'to_user_id',
+  'patient_id',
+  'appointment_id',
+] as const
+
+export type ConversationEventMetadataKey = (typeof CONVERSATION_EVENT_METADATA_KEYS)[number]
+export type ConversationEventMetadata = Partial<Record<ConversationEventMetadataKey, unknown>>
+
+/* =============================================================================
+   Paginacao
+   ========================================================================== */
+
+/**
+ * Pagina generica com cursor.
+ *
+ * Cursor e nao offset: a fila muda embaixo do leitor a cada mensagem que chega.
+ * Com offset, uma conversa que sobe para o topo entre duas paginas faz outra
+ * descer uma posicao e sumir — a pessoa nunca a ve, e nada indica que faltou.
+ * O cursor ancora numa linha concreta, entao o pior caso e repetir, nao perder.
+ *
+ * `nextCursor` nulo significa fim. NAO significa "tente de novo depois".
+ */
+export interface Page<T> {
+  items: T[]
+  nextCursor: string | null
+}
+
+export const PAGE_LIMIT_DEFAULT = 30
+export const PAGE_LIMIT_MAX = 100
+
+/** Filtro por quem atende. `mine` depende do auth.uid() da requisicao. */
+export const CONVERSATION_ASSIGNMENT_FILTERS = ['mine', 'unassigned', 'all'] as const
+export const conversationAssignmentFilterSchema = z.enum(CONVERSATION_ASSIGNMENT_FILTERS)
+export type ConversationAssignmentFilter = z.infer<typeof conversationAssignmentFilterSchema>
+
+/** Tamanho maximo da busca livre. Acima disso nao e busca, e payload. */
+export const CONVERSATION_SEARCH_MAX = 80
+
+export const listConversationsQuerySchema = z.object({
+  status: conversationStatusSchema.optional(),
+  assignment: conversationAssignmentFilterSchema.default('all'),
+  patientId: z.string().uuid().optional(),
+  q: z.string().trim().min(1).max(CONVERSATION_SEARCH_MAX).optional(),
+  limit: z.coerce.number().int().min(1).max(PAGE_LIMIT_MAX).default(PAGE_LIMIT_DEFAULT),
+  cursor: z.string().optional(),
+})
+
+export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>
+
+export const paginationQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(PAGE_LIMIT_MAX).default(PAGE_LIMIT_DEFAULT),
+  cursor: z.string().optional(),
+})
+
+export type PaginationQuery = z.infer<typeof paginationQuerySchema>
 
 export interface Message {
   id: string
   clinicId: string
   conversationId: string
+  /**
+   * Carimbado pelo banco a partir da conversa, nunca informado pelo cliente.
+   * A UI depende disso para nao exibir estado de entrega em mensagem manual.
+   */
+  channel: ConversationChannel
   direction: MessageDirection
   body: string
   occurredAt: string
