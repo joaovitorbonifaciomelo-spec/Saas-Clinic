@@ -1,6 +1,7 @@
 # Proposta técnica — Módulo Atendimento
 
-> **Status: APROVADA** com as 15 decisões registradas em 27/08/2026.
+> **Status: APROVADA** com as 15 decisões de 27/08/2026 e as 2 decisões
+> finais de 28/08/2026 (`channel`×`provider` e `appointment_created`).
 > Este documento é o **domínio decidido**. O “como e em que ordem construir”
 > está em [`atendimento-core-v0.1-plano.md`](./atendimento-core-v0.1-plano.md).
 >
@@ -89,15 +90,15 @@ payload de provider** — metadata pequeno e controlado, campos conhecidos.
 | `version` | integer NOT NULL default 1 | Concorrência otimista (§9) |
 | `created_at` / `updated_at` | timestamptz | |
 
-> **Recomendação que ajusta a decisão 1.** Vocês listaram `provider` como parte
-> da identidade. Proponho separar em **`channel`** (identidade da thread) e
-> **`provider`** (coluna operacional).
+> **DECISÃO 16 (fechada): `channel` e `provider` são coisas diferentes.**
 >
-> Motivo concreto: se a clínica trocar de fornecedor — Evolution → Meta Cloud —
-> e `provider` fizer parte da identidade, **todo paciente ganha uma thread nova
-> e o histórico se parte numa mudança de infraestrutura**. Como o fornecedor
-> ainda nem foi escolhido, essa troca é provável, não hipotética.
-> `channel = 'whatsapp'` sobrevive à troca; `provider` registra quem entregou.
+> | | Significado | Entra na identidade? |
+> |---|---|---|
+> | `channel` | Natureza do canal (`manual`, `whatsapp`) | **Sim** |
+> | `provider` | Infraestrutura que entrega o canal (`meta_cloud`, `evolution`) | **Não** |
+>
+> Trocar de fornecedor **não cria thread nova por si só**. Para `manual`,
+> `provider` é nulo — e a UI não finge que manual é WhatsApp (§16).
 
 ### `messages`
 
@@ -200,18 +201,30 @@ forma.
 > **DECISÃO 3.** Uma thread contínua por `clinic + channel + identidade
 > externa`. Conversa resolvida reabre; não se cria conversa nova por assunto.
 
-O ponto delicado é que **as duas colunas de identidade são nullable**. A regra
-tem três casos e cada um recebe seu índice parcial:
+> **DECISÃO 17 (fechada): a identidade canônica é o TELEFONE, não o id do
+> provedor.** `provider_contact_id` pode mudar quando o fornecedor muda; o
+> número não. Ele continua gravado como **identidade operacional da
+> integração**, mas fora da chave da thread sempre que houver telefone.
 
-| Caso | Identidade | Regra |
+Isso **inverte a prioridade** que a versão anterior deste documento propunha:
+
+| Ordem | Identidade | Regra |
 |---|---|---|
-| Provedor com id próprio | `provider_contact_id` | Uma thread por `(clinic, channel, provider_contact_id)` |
-| Só telefone (inclui `manual`) | `contact_phone_e164` | Uma thread por `(clinic, channel, phone)` |
-| Nenhuma identidade (`manual` sem telefone) | — | Sem unicidade: cada conversa é própria |
+| 1º | `contact_phone_e164` | Uma thread por `(clinic, channel, phone)` — **sempre que houver telefone** |
+| 2º | `provider_contact_id` | Só quando **não** houver telefone |
+| 3º | nenhuma | `manual` presencial: sem unicidade, cada conversa é própria |
 
-O detalhe que evita o bug: o segundo índice precisa de
-`where provider_contact_id is null`, senão o mesmo contato com wa_id **e**
-telefone seria bloqueado por duas regras que se contradizem. SQL exato no plano.
+Os dois índices parciais têm predicados **mutuamente exclusivos** (o segundo
+exige `contact_phone_e164 is null`), então nenhuma linha é governada pelas duas
+regras ao mesmo tempo. SQL exato no plano.
+
+**A consequência que essa inversão cria** — e que assumo como custo, não como
+descuido: uma conversa que nasceu só com `provider_contact_id` e **depois**
+descobre o telefone pode colidir com uma thread já existente daquele número. O
+banco recusa com `23505`, a API responde com mensagem clara, e **fusão de
+threads fica explicitamente fora da v0.1**. A mitigação é capturar e normalizar
+o telefone o mais cedo possível, tornando o caminho “só id do provedor” a
+exceção.
 
 ---
 
@@ -313,12 +326,19 @@ O raciocínio, em três passos:
 retroativo. Quando alguém perguntar “quantos agendamentos nasceram do
 atendimento?”, a resposta começará do dia em que a tabela existir.
 
-**Alternativa de uma linha, se quiserem histórico desde o dia um:** ao criar um
-agendamento a partir da conversa, gravar um `conversation_events` com
-`event_type = 'appointment_created'` e `metadata = {"appointment_id": "…"}`.
-Nenhuma tabela nova, histórico preservado, e a tabela de ligação vira uma
-consolidação futura do que já estará no log. **Fica como decisão de vocês** —
-recomendo aceitar, o custo é um INSERT.
+> **DECISÃO 18 (fechada): evento `appointment_created` aprovado.**
+>
+> Gravado **somente quando o agendamento foi criado com sucesso** a partir da
+> conversa. Metadata **estritamente** `{ "appointment_id": UUID }` — nada além.
+> Registra proveniência histórica desde o dia um, sem tabela nova.
+>
+> `conversation_appointments` continua fora da v0.1. Se a relação persistente
+> virar necessidade, a tabela é criada depois e **estes eventos servem de
+> histórico retroativo** — que era exatamente o custo que estávamos aceitando.
+
+O “controlado” não é promessa: o banco recusa qualquer outra chave e valida o
+formato do UUID, e um trigger confirma que o agendamento **é da mesma clínica**
+antes de aceitar o evento. Detalhes no plano.
 
 ---
 
@@ -372,7 +392,7 @@ que a pessoa executa*, não um tipo por valor resultante.
 | `patient_linked` | `{patient_id}` |
 | `patient_unlinked` | `{patient_id}` |
 | `status_changed` | `{from, to, reason?}` — reabertura automática usa `reason: "inbound_message"` com `actor_user_id` NULL |
-| `appointment_created` | `{appointment_id}` — **só se aceitarem a alternativa da §12** |
+| `appointment_created` | `{appointment_id}` — só após criação bem-sucedida (§12) |
 
 `metadata` é jsonb **pequeno e de chaves conhecidas**. Payload bruto de
 provider não entra: é volumoso, muda de formato entre fornecedores e pode
@@ -419,6 +439,16 @@ episódios por assunto · ações em lote · edição/exclusão de mensagem.
 └────────┴───────────────────────┴─────────────────────────────┴──────────────────────┘
 ```
 
+> **DECISÃO 19 (fechada): o modo manual precisa se anunciar.** Enquanto não
+> houver provedor real conectado, a tela mostra, em texto visível e permanente:
+>
+> > **Modo manual** — mensagens registradas aqui não são enviadas nem recebidas
+> > pelo WhatsApp.
+>
+> **Não em tooltip, não na documentação.** Faixa fixa no topo da thread, e o
+> botão do composer diz “Registrar mensagem”, nunca “Enviar”. É a mitigação do
+> risco 10 do plano — o único risco de produto, e o de maior probabilidade.
+
 Eventos de sistema aparecem na thread como **linhas discretas** (`·· Ana
 assumiu · 14:29 ··`), não como mensagens — são de outra natureza e não podem
 competir visualmente com o que o paciente disse.
@@ -447,10 +477,11 @@ alcança.
 | 13 | Escopo funcional da v0.1 conforme lista aprovada |
 | 14 | Sidebar + três áreas no desktop |
 | 15 | Proposta atualizada; plano de implementação em documento separado |
+| 16 | `channel` na identidade; `provider` operacional e nulo em `manual` |
+| 17 | Identidade canônica é o telefone; `provider_contact_id` só como fallback |
+| 18 | Evento `appointment_created` com metadata estrito; sem tabela de ligação |
+| 19 | Modo manual anunciado em texto fixo na tela |
 
-## Pontos que ainda voltam para vocês
-
-1. **`channel` separado de `provider`** (§3) — recomendo separar, para que troca
-   de fornecedor não parta o histórico de todo paciente.
-2. **`appointment_created` como evento** (§12) — recomendo aceitar; custa um
-   INSERT e preserva histórico desde o dia um.
+**Nenhuma decisão em aberto.** O próximo passo é a revisão final do SQL em
+[`atendimento-core-v0.1-plano.md`](./atendimento-core-v0.1-plano.md), e só
+depois `db:push`.
