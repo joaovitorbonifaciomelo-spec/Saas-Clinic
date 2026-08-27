@@ -151,6 +151,29 @@ for (const row of grants.rows) {
  */
 const FORBIDDEN_FOR_AUTHENTICATED = ['TRUNCATE', 'TRIGGER', 'REFERENCES']
 
+const ATENDIMENTO = ['conversations', 'messages', 'conversation_events']
+
+/**
+ * Matriz explicita de service_role nas tabelas do Atendimento.
+ *
+ * A 0015 usou `grant all` e levou TRUNCATE, REFERENCES e TRIGGER de brinde —
+ * `all` nao e um conjunto abstrato, expande para os sete privilegios da tabela.
+ * A 0016 revogou os tres. Este bloco existe para que a regressao apareca aqui e
+ * nao numa leitura manual de ACL seis meses depois.
+ *
+ * TRUNCATE e o que mais pesa: nao e coberto por RLS, nao dispara trigger de
+ * linha, e esvazia todos os tenants numa instrucao sem deixar rastro.
+ */
+const SERVICE_ROLE_ATENDIMENTO = {
+  SELECT: true,
+  INSERT: true,
+  UPDATE: true,
+  DELETE: true,
+  TRUNCATE: false,
+  REFERENCES: false,
+  TRIGGER: false,
+}
+
 console.log('\n  PRIVILEGIOS PROIBIDOS PARA authenticated')
 console.log('  ' + '-'.repeat(64))
 for (const table of TABLES) {
@@ -216,7 +239,7 @@ for (const role of ['anon', 'authenticated', 'service_role']) {
     }
   }
   if (role === 'service_role') {
-    for (const table of TABLES) {
+    for (const table of TABLES.filter((t) => !ATENDIMENTO.includes(t))) {
       const actual = byRole[role]?.[table] ?? []
       for (const needed of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
         if (!actual.includes(needed))
@@ -278,6 +301,31 @@ for (const table of TABLES) {
   if (actual !== expected) {
     fail(`${table}: esperadas ${expected} policies, encontradas ${actual}`)
   }
+}
+
+// --- service_role nas tabelas do Atendimento ---------------------------------
+console.log('')
+console.log('  MATRIZ DE service_role NO ATENDIMENTO')
+console.log('  ' + '-'.repeat(64))
+const privsMatriz = Object.keys(SERVICE_ROLE_ATENDIMENTO)
+console.log('    ' + 'tabela'.padEnd(22) + privsMatriz.map((p) => p.slice(0, 4).padEnd(7)).join(''))
+for (const table of ATENDIMENTO) {
+  const linha = []
+  for (const priv of privsMatriz) {
+    const { rows } = await client.query(
+      `select has_table_privilege('service_role', $1, $2) as ok`,
+      [`public.${table}`, priv],
+    )
+    const efetivo = rows[0].ok
+    const esperado = SERVICE_ROLE_ATENDIMENTO[priv]
+    linha.push((efetivo ? 'sim' : '-').padEnd(7))
+    if (efetivo !== esperado) {
+      fail(
+        `service_role.${table}: ${priv} esperado ${esperado ? 'SIM' : 'nao'}, efetivo ${efetivo ? 'SIM' : 'nao'}`,
+      )
+    }
+  }
+  console.log('    ' + table.padEnd(22) + linha.join(''))
 }
 
 // --- EXECUTE nas funcoes do Atendimento --------------------------------------
