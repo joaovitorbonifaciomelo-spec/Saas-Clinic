@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0014 - Privilegios de tabela do Atendimento
+-- 0014 - Privilegios do Atendimento
 --
 -- revoke-then-grant, como a 0007 estabeleceu e a agenda repetiu.
 --
@@ -11,67 +11,99 @@
 --
 -- PUBLIC entra no revoke porque e herdado por todo papel.
 --
--- TRUNCATE nao entra em nenhuma linha abaixo: RLS nao o cobre, e quem o tiver
--- apaga os dados de todos os tenants sem violar policy nenhuma. REFERENCES
--- tambem nao: as FKs compostas sao criadas pelo dono na 0012. DELETE nao entra
--- em lugar nenhum.
+-- =============================================================================
+-- A REGRA DESTE MODULO: `authenticated` LE. NAO ESCREVE.
+--
+-- Nenhuma das tres tabelas recebe INSERT, UPDATE ou DELETE. Toda escrita passa
+-- por funcao controlada, e cada uma delas existe por um motivo que um GRANT nao
+-- consegue expressar:
+--
+--   criar conversa   - o cliente escolheria status, assigned_to, version e os
+--                      timestamps de atividade. Uma conversa poderia nascer
+--                      resolvida, ja atribuida e com atividade no futuro.
+--   criar mensagem   - o cliente escolheria clinic_id, canal, autoria e status
+--                      de entrega. Uma mensagem manual poderia exibir "lida".
+--   mudar estado     - o filtro por versao seria voluntario, e dois atendentes
+--                      assumiriam a mesma conversa sem perceber.
+--   gravar evento    - um membro fabricaria historico que nunca aconteceu.
+--
+-- TRUNCATE nao entra em nenhuma linha: RLS nao o cobre, e quem o tiver apaga os
+-- dados de todos os tenants sem violar policy. REFERENCES tambem nao: as FKs
+-- compostas sao criadas pelo dono na 0012.
 -- =============================================================================
 
 revoke all on public.conversations       from public, anon, authenticated;
 revoke all on public.messages            from public, anon, authenticated;
 revoke all on public.conversation_events from public, anon, authenticated;
 
--- -----------------------------------------------------------------------------
--- conversations: SELECT e INSERT. **SEM UPDATE.**
---
--- Este e o ponto que muda em relacao a primeira versao desta migration.
---
--- Com UPDATE concedido, o filtro `and version = :n` seria protocolo da
--- aplicacao: nada obrigaria um cliente autenticado a usa-lo, e a concorrencia
--- otimista viraria convencao voluntaria — exatamente o que uma corrida entre
--- dois atendentes explora. Bastaria um `.update({ assigned_to })` sem o filtro
--- para dois atendentes acreditarem que assumiram a mesma conversa.
---
--- Sem UPDATE, a unica porta para mudar estado sao as funcoes de controle da
--- 0012, e nelas a versao esperada e PARAMETRO OBRIGATORIO. A garantia deixa de
--- depender de disciplina de quem escreve o cliente.
---
--- INSERT continua direto: criar conversa nao tem versao anterior para
--- conflitar, o RLS protege o tenant, as FKs compostas protegem as referencias e
--- o evento `conversation_created` e emitido por trigger.
--- -----------------------------------------------------------------------------
-grant select, insert on public.conversations to authenticated;
-
--- -----------------------------------------------------------------------------
--- messages: SELECT e INSERT.
---
--- Mensagem e acrescimo, nao substitui estado — nao ha o que versionar. Canal e
--- autoria sao carimbados por trigger, entao o cliente nao escolhe nenhum dos
--- dois. Sem UPDATE: `delivery_status` ganha policy propria quando houver
--- provedor, e ate la nada muda depois de gravado.
--- -----------------------------------------------------------------------------
-grant select, insert on public.messages to authenticated;
-
--- -----------------------------------------------------------------------------
--- conversation_events: SELECT SOMENTE.
---
--- Segundo ponto que muda. Antes `authenticated` tinha INSERT, e o trigger de
--- carimbo garantia apenas que o AUTOR era verdadeiro — nada impedia um membro
--- de fabricar um `transferred` ou um `status_changed` que nunca aconteceu. Um
--- log em que se pode escrever a mao nao e log de auditoria; e um mural.
---
--- Agora o log so e escrito por caminhos controlados, todos SECURITY DEFINER na
--- 0012 e portanto rodando como dono da tabela:
---
---   conversation_created  -> trigger em conversations
---   status_changed        -> conversation_set_status, e a reabertura automatica
---   assigned/transferred/
---   released              -> conversation_assign / _transfer / _release
---   patient_linked/
---   patient_unlinked      -> conversation_link_patient / _unlink_patient
---   appointment_created   -> conversation_log_appointment
---
--- Em nenhum deles o cliente escolhe event_type ou metadata: os dois sao
--- construidos dentro da funcao, a partir do que realmente mudou.
--- -----------------------------------------------------------------------------
+grant select on public.conversations       to authenticated;
+grant select on public.messages            to authenticated;
 grant select on public.conversation_events to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- Funcoes expostas
+--
+-- Declaradas aqui alem da 0012 para que ESTE arquivo seja a resposta completa a
+-- "o que authenticated pode fazer no Atendimento?" — sem precisar cruzar dois
+-- arquivos para ter certeza.
+--
+-- O default do PostgreSQL concede EXECUTE a PUBLIC em toda funcao nova; por
+-- isso cada revoke abaixo e explicito, e nao herdado.
+-- -----------------------------------------------------------------------------
+
+-- Criacao
+revoke execute on function public.conversation_create_manual(uuid, text, text, uuid)
+  from public, anon;
+grant  execute on function public.conversation_create_manual(uuid, text, text, uuid)
+  to authenticated;
+
+revoke execute on function
+  public.conversation_add_manual_message(uuid, public.message_direction, text, timestamptz)
+  from public, anon;
+grant  execute on function
+  public.conversation_add_manual_message(uuid, public.message_direction, text, timestamptz)
+  to authenticated;
+
+-- Controle: todas exigem a versao esperada.
+revoke execute on function public.conversation_assign(uuid, integer)         from public, anon;
+grant  execute on function public.conversation_assign(uuid, integer)         to authenticated;
+
+revoke execute on function public.conversation_transfer(uuid, integer, uuid) from public, anon;
+grant  execute on function public.conversation_transfer(uuid, integer, uuid) to authenticated;
+
+revoke execute on function public.conversation_release(uuid, integer)        from public, anon;
+grant  execute on function public.conversation_release(uuid, integer)        to authenticated;
+
+revoke execute on function
+  public.conversation_set_status(uuid, integer, public.conversation_status) from public, anon;
+grant  execute on function
+  public.conversation_set_status(uuid, integer, public.conversation_status) to authenticated;
+
+revoke execute on function public.conversation_link_patient(uuid, integer, uuid)
+  from public, anon;
+grant  execute on function public.conversation_link_patient(uuid, integer, uuid)
+  to authenticated;
+
+revoke execute on function public.conversation_unlink_patient(uuid, integer) from public, anon;
+grant  execute on function public.conversation_unlink_patient(uuid, integer) to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- NAO expostas
+--
+-- conversation_log_appointment: prova que o agendamento e desta clinica, mas
+-- nao prova que ele NASCEU desta conversa. Exposta, qualquer membro afirmaria
+-- proveniencia depois do fato — e log auditavel construido sobre afirmacao do
+-- cliente nao audita nada. Volta quando a API criar o agendamento e registrar a
+-- proveniencia no mesmo caminho.
+--
+-- conversation_row_json / message_row_json / conversation_conflict: auxiliares
+-- internas das funcoes acima. Nao ha motivo para o cliente chama-las.
+-- -----------------------------------------------------------------------------
+revoke execute on function public.conversation_log_appointment(uuid, uuid)
+  from public, anon, authenticated;
+revoke execute on function public.conversation_row_json(public.conversations)
+  from public, anon, authenticated;
+revoke execute on function public.message_row_json(public.messages)
+  from public, anon, authenticated;
+revoke execute on function public.conversation_conflict(uuid)
+  from public, anon, authenticated;

@@ -5,16 +5,21 @@
 -- helpers SECURITY DEFINER quebram a recursao que uma policy consultando
 -- clinic_members causaria.
 --
--- Tres ausencias sao deliberadas, nao esquecimento:
+-- Toda escrita e deliberadamente ausente, nao esquecida:
 --
---   conversations       sem UPDATE  - mudanca de estado so pelas funcoes de
---                                     controle, onde a versao esperada e
---                                     obrigatoria (ver 0012 e 0014).
+-- As tres tabelas ficam com SELECT e mais nada. Toda escrita passa por funcao
+-- controlada da 0012:
+--
+--   conversations       sem INSERT  - nasce por conversation_create_manual, com
+--                                     as invariantes fixadas pelo banco.
+--                       sem UPDATE  - muda por funcao de controle, onde a
+--                                     versao esperada e obrigatoria.
 --                       sem DELETE  - conversa nao se apaga: resolve.
---   messages            sem UPDATE  - mensagem e fato consumado.
+--   messages            sem INSERT  - entra por conversation_add_manual_message.
+--                       sem UPDATE  - mensagem e fato consumado.
 --                       sem DELETE
---   conversation_events sem INSERT  - o log e escrito so por caminhos
---                       sem UPDATE    controlados; membro nao fabrica evento.
+--   conversation_events sem INSERT  - escrito so por triggers e funcoes;
+--                       sem UPDATE    membro nao fabrica evento.
 --                       sem DELETE
 --
 -- Quando o provedor chegar, `messages.delivery_status` vai precisar de uma
@@ -35,12 +40,11 @@ create policy conversations_select_member
   to authenticated
   using (public.is_clinic_member(clinic_id));
 
+-- SEM policy de INSERT: conversa nasce por conversation_create_manual, onde o
+-- banco fixa channel, status, assigned_to, version e timestamps. Com INSERT
+-- direto o cliente escolheria todos eles, e uma conversa poderia nascer
+-- resolvida, ja atribuida e com a atividade no futuro.
 drop policy if exists conversations_insert_member on public.conversations;
-create policy conversations_insert_member
-  on public.conversations
-  for insert
-  to authenticated
-  with check (public.is_clinic_member(clinic_id));
 
 -- SEM policy de UPDATE, e a ausencia e a defesa.
 --
@@ -64,12 +68,9 @@ create policy messages_select_member
   to authenticated
   using (public.is_clinic_member(clinic_id));
 
+-- SEM policy de INSERT: mensagem entra por conversation_add_manual_message,
+-- que deriva clinic_id da conversa e recusa conversa que nao seja manual.
 drop policy if exists messages_insert_member on public.messages;
-create policy messages_insert_member
-  on public.messages
-  for insert
-  to authenticated
-  with check (public.is_clinic_member(clinic_id));
 
 -- -----------------------------------------------------------------------------
 -- conversation_events

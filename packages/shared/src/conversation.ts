@@ -320,8 +320,12 @@ export interface Message {
   direction: MessageDirection
   body: string
   occurredAt: string
+  /** Quem DISSE. Nulo em inbound: quem disse foi o paciente. */
   authorUserId: string | null
   authorNameSnapshot: string | null
+  /** Quem da equipe REGISTROU o fato. Nulo quando nao ha pessoa (webhook). */
+  recordedByUserId: string | null
+  recordedByNameSnapshot: string | null
   provider: string | null
   providerMessageId: string | null
   deliveryStatus: MessageDeliveryStatus | null
@@ -379,6 +383,25 @@ export function isUnclaimed(c: { status: ConversationStatus; assignedTo: string 
 /* =============================================================================
    Conflito de versao
    ========================================================================== */
+
+/**
+ * Resultado das funcoes de controle do banco.
+ *
+ * As RPCs devolvem "outcome" em vez de lancar excecao para o caso esperado: um
+ * conflito de versao e fluxo normal de caixa compartilhada, nao erro. A API
+ * mapeia "conflict" para 409 e "not_found" para 404.
+ *
+ * "not_found" cobre inexistente E outro tenant com a MESMA forma, de proposito.
+ */
+export const CONVERSATION_OUTCOMES = [
+  'ok',
+  'conflict',
+  'not_found',
+  'exists',
+  'not_manual',
+  'invalid_body',
+] as const
+export type ConversationOutcome = (typeof CONVERSATION_OUTCOMES)[number]
 
 export const CONVERSATION_VERSION_CONFLICT = 'CONVERSATION_VERSION_CONFLICT' as const
 

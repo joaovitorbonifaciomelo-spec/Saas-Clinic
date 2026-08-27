@@ -147,17 +147,35 @@ try {
   const pacienteA = await inserirPaciente(userA, clinicA, 'Paciente A')
   const pacienteB = await inserirPaciente(userB, clinicB, 'Paciente B')
 
+  /** Cria pela funcao controlada — o unico caminho que authenticated tem. */
   const novaConversa = (userId, clinicId, extra = {}) =>
     comoUsuario(userId, async () => {
-      const cols = ['clinic_id', 'channel', ...Object.keys(extra)]
-      const vals = [clinicId, 'manual', ...Object.values(extra)]
-      const ph = vals.map((_, i) => `$${i + 1}`).join(', ')
       const { rows } = await db.query(
-        `insert into public.conversations (${cols.join(', ')}) values (${ph})
-         returning id, version`,
-        vals,
+        `select public.conversation_create_manual($1, $2, $3, $4) as r`,
+        [
+          clinicId,
+          extra.contact_phone_e164 ?? null,
+          extra.contact_name_snapshot ?? null,
+          extra.patient_id ?? null,
+        ],
       )
-      return rows[0]
+      const r = rows[0].r
+      if (r.outcome !== 'ok') {
+        const e = new Error(`create_manual devolveu ${r.outcome}`)
+        e.code = r.outcome === 'exists' ? '23505' : r.outcome
+        throw e
+      }
+      return { id: r.conversation.id, version: r.conversation.version }
+    })
+
+  /** Insere mensagem manual pela funcao controlada. */
+  const novaMensagem = (userId, conversationId, direction, body, occurredAt = null) =>
+    comoUsuario(userId, async () => {
+      const { rows } = await db.query(
+        `select public.conversation_add_manual_message($1, $2, $3, $4) as r`,
+        [conversationId, direction, body, occurredAt],
+      )
+      return rows[0].r
     })
 
   const convA = await novaConversa(userA, clinicA)
@@ -312,56 +330,217 @@ try {
     '23503',
   )
 
-  // ------------------------------------------------- 5. autoria de mensagem
-  console.log('\n  === 5. Mensagens ===\n')
+  // ------------------------------------------ 5. superficie de escrita fechada
+  console.log('\n  === 5. Superficie de escrita ===\n')
 
-  await afirma('outbound NAO consegue forjar autoria', async () => {
-    const c = await novaConversa(userA, clinicA)
-    const { rows } = await comoUsuario(userA, () =>
-      db.query(
-        `insert into public.messages
-           (clinic_id, conversation_id, channel, direction, body,
-            author_user_id, author_name_snapshot)
-         values ($1, $2, 'whatsapp', 'outbound', 'ola', $3, 'Nome Falso')
-         returning author_user_id, author_name_snapshot, channel`,
-        [clinicA, c.id, userB],
+  await afirmaRecusa(
+    'INSERT direto em conversations e negado',
+    () =>
+      comoUsuario(userA, () =>
+        db.query(`insert into public.conversations (clinic_id, channel) values ($1,'manual')`, [
+          clinicA,
+        ]),
       ),
-    )
-    const m = rows[0]
+    'permission denied',
+  )
+
+  await afirmaRecusa(
+    'INSERT direto em messages e negado',
+    () =>
+      comoUsuario(userA, () =>
+        db.query(
+          `insert into public.messages (clinic_id, conversation_id, direction, body)
+           values ($1,$2,'inbound','oi')`,
+          [clinicA, convA.id],
+        ),
+      ),
+    'permission denied',
+  )
+
+  await afirma('create_manual nasce open, sem dono e com version 1', async () => {
+    const r = await comoUsuario(userA, async () => {
+      const { rows } = await db.query(
+        `select public.conversation_create_manual($1, null, null, null) as r`,
+        [clinicA],
+      )
+      return rows[0].r
+    })
+    const c = r.conversation
     return (
-      m.author_user_id === userA &&
-      m.author_name_snapshot !== 'Nome Falso' &&
-      m.channel === 'manual'
+      r.outcome === 'ok' &&
+      c.status === 'open' &&
+      c.assignedTo === null &&
+      c.version === 1 &&
+      c.channel === 'manual' &&
+      c.provider === null &&
+      c.providerContactId === null
     )
   })
 
-  await afirma('inbound nunca tem autor interno', async () => {
-    const c = await novaConversa(userA, clinicA)
-    const { rows } = await comoUsuario(userA, () =>
-      db.query(
-        `insert into public.messages (clinic_id, conversation_id, direction, body,
-                                      author_user_id, author_name_snapshot)
-         values ($1, $2, 'inbound', 'oi', $3, 'Falso')
-         returning author_user_id, author_name_snapshot`,
-        [clinicA, c.id, userA],
-      ),
+  await afirma('create_manual nao aceita canal, status, versao nem timestamps', async () => {
+    // A funcao tem quatro parametros e nenhum deles e de controle. Tentar
+    // passar um quinto e erro de assinatura, nao um campo ignorado em silencio.
+    try {
+      await comoUsuario(userA, () =>
+        db.query(`select public.conversation_create_manual($1, null, null, null, 'whatsapp')`, [
+          clinicA,
+        ]),
+      )
+      return false
+    } catch (e) {
+      return /does not exist|function/i.test(e.message)
+    }
+  })
+
+  await afirma('create_manual de clinica sem vinculo devolve not_found', async () => {
+    const r = await comoUsuario(userA, async () => {
+      const { rows } = await db.query(
+        `select public.conversation_create_manual($1, null, null, null) as r`,
+        [clinicB],
+      )
+      return rows[0].r
+    })
+    return r.outcome === 'not_found'
+  })
+
+  await afirma('create_manual com paciente de OUTRA clinica falha', async () => {
+    try {
+      await comoUsuario(userA, () =>
+        db.query(`select public.conversation_create_manual($1, null, null, $2)`, [
+          clinicA,
+          pacienteB,
+        ]),
+      )
+      return false
+    } catch (e) {
+      return (e.code ?? '') === '23503' || e.message.includes('23503')
+    }
+  })
+
+  await afirma('create_manual com paciente registra o vinculo na criacao', async () => {
+    const r = await comoUsuario(userA, async () => {
+      const { rows } = await db.query(
+        `select public.conversation_create_manual($1, null, null, $2) as r`,
+        [clinicA, pacienteA],
+      )
+      return rows[0].r
+    })
+    const { rows } = await db.query(
+      `select event_type, metadata from public.conversation_events where conversation_id = $1`,
+      [r.conversation.id],
     )
-    return rows[0].author_user_id === null && rows[0].author_name_snapshot === null
+    // Um evento so: nasceu vinculada, ninguem executou uma acao de vincular.
+    return (
+      rows.length === 1 &&
+      rows[0].event_type === 'conversation_created' &&
+      rows[0].metadata.patient_id === pacienteA
+    )
+  })
+
+  await afirma('telefone ja usado devolve a conversa existente, nao erro cru', async () => {
+    const tel = '+5511900000010'
+    const primeira = await comoUsuario(userA, async () => {
+      const { rows } = await db.query(
+        `select public.conversation_create_manual($1, $2, null, null) as r`,
+        [clinicA, tel],
+      )
+      return rows[0].r
+    })
+    const segunda = await comoUsuario(userA, async () => {
+      const { rows } = await db.query(
+        `select public.conversation_create_manual($1, $2, null, null) as r`,
+        [clinicA, tel],
+      )
+      return rows[0].r
+    })
+    return (
+      primeira.outcome === 'ok' &&
+      segunda.outcome === 'exists' &&
+      segunda.conversation.id === primeira.conversation.id
+    )
+  })
+
+  // ------------------------------------------------- 6. mensagens manuais
+  console.log('\n  === 6. Mensagens manuais ===\n')
+
+  await afirma('inbound: sem autor, mas com quem registrou', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const r = await novaMensagem(userA, c.id, 'inbound', 'Pode ser quinta?')
+    const m = r.message
+    // Quem falou foi o paciente; quem registrou foi a atendente.
+    return (
+      r.outcome === 'ok' &&
+      m.authorUserId === null &&
+      m.authorName === null &&
+      m.recordedByUserId === userA &&
+      m.recordedByName !== null
+    )
+  })
+
+  await afirma('outbound: autor e quem registrou sao a mesma pessoa', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const r = await novaMensagem(userA, c.id, 'outbound', 'Tenho quinta as 10.')
+    const m = r.message
+    return m.authorUserId === userA && m.recordedByUserId === userA && m.authorName !== null
+  })
+
+  await afirma('mensagem manual nunca finge entrega', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const r = await novaMensagem(userA, c.id, 'outbound', 'ok')
+    return r.message.deliveryStatus === null && r.message.channel === 'manual'
+  })
+
+  await afirmaRecusa(
+    'nem o dono da tabela marca entrega em mensagem manual',
+    async () => {
+      const c = await novaConversa(userA, clinicA)
+      await db.query(
+        `insert into public.messages (clinic_id, conversation_id, channel, direction, body,
+                                      delivery_status)
+         values ($1,$2,'manual','outbound','x','delivered')`,
+        [clinicA, c.id],
+      )
+    },
+    '23514',
+  )
+
+  await afirma('add_manual_message recusa conversa que nao e manual', async () => {
+    const { rows } = await db.query(
+      `insert into public.conversations (clinic_id, channel, provider, provider_contact_id)
+       values ($1,'whatsapp','evolution','wa-nao-manual') returning id`,
+      [clinicA],
+    )
+    const r = await novaMensagem(userA, rows[0].id, 'inbound', 'oi')
+    return r.outcome === 'not_manual'
+  })
+
+  await afirma('add_manual_message em conversa de outro tenant devolve not_found', async () => {
+    const r = await novaMensagem(userA, convB.id, 'inbound', 'oi')
+    return r.outcome === 'not_found'
+  })
+
+  await afirma('corpo vazio e recusado', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const r = await novaMensagem(userA, c.id, 'inbound', '   ')
+    return r.outcome === 'invalid_body'
+  })
+
+  await afirma('occurred_at omitido usa o relogio do servidor', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const antes = Date.now()
+    const r = await novaMensagem(userA, c.id, 'inbound', 'oi')
+    const t = new Date(r.message.occurredAt).getTime()
+    return t >= antes - 5000 && t <= Date.now() + 5000
   })
 
   await afirma('inbound reabre conversa resolvida, com evento do sistema', async () => {
     const c = await novaConversa(userA, clinicA)
     await chamar(userA, 'conversation_set_status', [c.id, c.version, 'resolved'])
-    await comoUsuario(userA, () =>
-      db.query(
-        `insert into public.messages (clinic_id, conversation_id, direction, body)
-         values ($1, $2, 'inbound', 'voltei')`,
-        [clinicA, c.id],
-      ),
-    )
+    await novaMensagem(userA, c.id, 'inbound', 'voltei')
+
     const { rows } = await db.query(`select status from public.conversations where id = $1`, [c.id])
     const ev = await db.query(
-      `select actor_user_id, metadata from public.conversation_events
+      `select actor_user_id from public.conversation_events
         where conversation_id = $1 and metadata->>'reason' = 'inbound_message'`,
       [c.id],
     )
@@ -370,28 +549,15 @@ try {
 
   await afirma('mensagem NAO incrementa a versao da conversa', async () => {
     const c = await novaConversa(userA, clinicA)
-    await comoUsuario(userA, () =>
-      db.query(
-        `insert into public.messages (clinic_id, conversation_id, direction, body)
-         values ($1, $2, 'inbound', 'oi')`,
-        [clinicA, c.id],
-      ),
-    )
+    await novaMensagem(userA, c.id, 'inbound', 'oi')
     const { rows } = await db.query(`select version from public.conversations where id = $1`, [c.id])
     return rows[0].version === c.version
   })
 
   await afirma('mensagens manuais identicas podem repetir', async () => {
     const c = await novaConversa(userA, clinicA)
-    for (let i = 0; i < 2; i += 1) {
-      await comoUsuario(userA, () =>
-        db.query(
-          `insert into public.messages (clinic_id, conversation_id, direction, body)
-           values ($1, $2, 'outbound', 'Confirmou por telefone.')`,
-          [clinicA, c.id],
-        ),
-      )
-    }
+    await novaMensagem(userA, c.id, 'outbound', 'Confirmou por telefone.')
+    await novaMensagem(userA, c.id, 'outbound', 'Confirmou por telefone.')
     const { rows } = await db.query(
       `select count(*)::int as n from public.messages where conversation_id = $1`,
       [c.id],
@@ -399,8 +565,20 @@ try {
     return rows[0].n === 2
   })
 
+  await afirma('mensagem atrasada nao faz a atividade andar para tras', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const agora = new Date().toISOString()
+    const antes = new Date(Date.now() - 3_600_000).toISOString()
+    await novaMensagem(userA, c.id, 'inbound', 'recente', agora)
+    await novaMensagem(userA, c.id, 'inbound', 'atrasada', antes)
+    const { rows } = await db.query(`select last_message_at from public.conversations where id = $1`, [
+      c.id,
+    ])
+    return new Date(rows[0].last_message_at).getTime() === new Date(agora).getTime()
+  })
+
   // ------------------------------------------------- 6. identidade
-  console.log('\n  === 6. Identidade da thread ===\n')
+  console.log('\n  === 7. Identidade da thread ===\n')
 
   await afirma('duas conversas manuais sem telefone coexistem', async () => {
     await novaConversa(userA, clinicA)
@@ -529,7 +707,7 @@ try {
   })
 
   // ------------------------------------------------- 7. appointment_created
-  console.log('\n  === 7. Proveniencia de agendamento ===\n')
+  console.log('\n  === 8. Proveniencia de agendamento ===\n')
 
   const criarAgendamento = async (userId, clinicId, pacienteId) => {
     const prof = await comoUsuario(userId, async () => {
@@ -553,16 +731,29 @@ try {
   const apptA = await criarAgendamento(userA, clinicA, pacienteA)
   const apptB = await criarAgendamento(userB, clinicB, pacienteB)
 
-  await afirma('appointment_created da propria clinica e aceito', async () => {
-    const r = await chamar(userA, 'conversation_log_appointment', [convA.id, apptA])
-    return r.outcome === 'ok'
-  })
-
   await afirmaRecusa(
-    'appointment_created cross-tenant e recusado (RPC)',
-    () => chamar(userA, 'conversation_log_appointment', [convA.id, apptB]),
-    'APPOINTMENT_NOT_IN_CLINIC',
+    'conversation_log_appointment NAO e executavel por authenticated',
+    () => chamar(userA, 'conversation_log_appointment', [convA.id, apptA]),
+    'permission denied',
   )
+
+  await afirma('a funcao existe e funciona como dono — so nao esta exposta', async () => {
+    // Fica pronta para quando a API criar o agendamento e registrar a
+    // proveniencia no mesmo caminho. Hoje, ninguem afirma proveniencia depois
+    // do fato.
+    // Sem trocar de papel (o dono nao passa pelo grant), mas COM a claim do
+    // usuario: a funcao exige vinculo, e vinculo depende de auth.uid().
+    await db.exec('begin')
+    await db.query(`select set_config('request.jwt.claims', $1, true)`, [
+      JSON.stringify({ sub: userA }),
+    ])
+    const { rows } = await db.query(`select public.conversation_log_appointment($1, $2) as r`, [
+      convA.id,
+      apptA,
+    ])
+    await db.exec('commit')
+    return rows[0].r.outcome === 'ok'
+  })
 
   await afirmaRecusa(
     'nem como DONO DA TABELA da para plantar agendamento de outra clinica',
@@ -599,7 +790,7 @@ try {
   )
 
   // ------------------------------------------------- 8. isolamento e FK
-  console.log('\n  === 8. Isolamento ===\n')
+  console.log('\n  === 9. Isolamento ===\n')
 
   await afirma('A so enxerga as conversas de A', async () => {
     const n = await comoUsuario(userA, async () => {
@@ -617,6 +808,32 @@ try {
     () => db.query(`update public.conversations set assigned_to = $1 where id = $2`, [userB, convA.id]),
     '23503',
   )
+
+  await afirma('conflito nao devolve estado apos o vinculo ser removido', async () => {
+    const { rows: u } = await db.query(
+      `insert into auth.users (email) values ('efemero@example.test') returning id`,
+    )
+    const efemero = u[0].id
+    await db.query(
+      `insert into public.clinic_members (clinic_id, user_id, role) values ($1,$2,'attendant')`,
+      [clinicA, efemero],
+    )
+
+    const c = await novaConversa(userA, clinicA)
+    // Alguem assume, para que a proxima tentativa caia em conflito.
+    await chamar(userA, 'conversation_assign', [c.id, c.version])
+
+    await db.query(`delete from public.clinic_members where clinic_id = $1 and user_id = $2`, [
+      clinicA,
+      efemero,
+    ])
+
+    // Ex-membro tentando assumir com versao stale: seria conflito se ainda
+    // tivesse vinculo. Sem vinculo, tem que ser not_found — o estado da
+    // conversa nao pode vazar para quem acabou de perder o acesso.
+    const r = await chamar(efemero, 'conversation_assign', [c.id, c.version])
+    return r.outcome === 'not_found' && r.conversation === undefined
+  })
 
   await afirma('remover membership devolve a conversa a fila sem bloquear', async () => {
     const c = await novaConversa(userA, clinicA)

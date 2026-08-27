@@ -53,6 +53,8 @@ drop function if exists public.enforce_conversation_identity();
 drop function if exists public.on_conversation_created();
 
 -- Funcoes de controle. Assinatura completa: sao sobrecarregaveis por engano.
+drop function if exists public.conversation_add_manual_message(uuid, public.message_direction, text, timestamptz);
+drop function if exists public.conversation_create_manual(uuid, text, text, uuid);
 drop function if exists public.conversation_log_appointment(uuid, uuid);
 drop function if exists public.conversation_unlink_patient(uuid, integer);
 drop function if exists public.conversation_link_patient(uuid, integer, uuid);
@@ -62,6 +64,7 @@ drop function if exists public.conversation_transfer(uuid, integer, uuid);
 drop function if exists public.conversation_assign(uuid, integer);
 drop function if exists public.conversation_conflict(uuid);
 drop function if exists public.conversation_row_json(public.conversations);
+drop function if exists public.message_row_json(public.messages);
 
 -- 2) Tabelas -----------------------------------------------------------------
 --    Ordem inversa da criacao: os filhos referenciam conversations por FK

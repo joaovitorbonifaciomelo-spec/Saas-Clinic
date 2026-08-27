@@ -210,10 +210,23 @@ create table if not exists public.messages (
 
   -- Decisao 7: autoria sobrevive a saida do funcionario. O id vira null quando
   -- a conta e removida, mas o nome permanece pelo snapshot, e nada e reatribuido.
+  -- AUTOR: quem DISSE. Nulo em inbound, porque quem disse foi o paciente.
   author_user_id       uuid references auth.users (id) on delete set null,
   author_name_snapshot text
                          check (author_name_snapshot is null
                                 or char_length(btrim(author_name_snapshot)) between 1 and 120),
+
+  -- QUEM REGISTROU: quem da equipe digitou este fato no sistema.
+  --
+  -- Sao coisas diferentes, e sem a segunda o registro manual perde rastro: numa
+  -- mensagem inbound o autor e o paciente, entao sem recorded_by nao ha como
+  -- saber quem da clinica afirmou que aquilo foi dito. Fica nulo quando nao ha
+  -- pessoa por tras — o webhook do futuro registra sozinho.
+  recorded_by_user_id       uuid references auth.users (id) on delete set null,
+  recorded_by_name_snapshot text
+                              check (recorded_by_name_snapshot is null
+                                     or char_length(btrim(recorded_by_name_snapshot))
+                                        between 1 and 120),
 
   provider             text
                          check (provider is null
@@ -238,6 +251,13 @@ create table if not exists public.messages (
   -- Status de entrega so faz sentido saindo.
   constraint messages_delivery_only_outbound
     check (delivery_status is null or direction = 'outbound'),
+
+  -- Modo manual nao entrega nada: nao ha provedor para dizer 'sent' ou 'read'.
+  -- Sem esta trava, uma mensagem registrada a mao poderia exibir confirmacao de
+  -- leitura que ninguem nunca produziu — a mentira mais facil de acreditar,
+  -- porque a tela ficaria igualzinha a de uma entrega real.
+  constraint messages_manual_has_no_delivery
+    check (channel <> 'manual' or delivery_status is null),
 
   -- Mesma regra de canal x provedor das conversas.
   constraint messages_channel_provider_check check (
@@ -558,15 +578,24 @@ begin
    * Saida sem usuario autenticado (futuro envio automatico) fica sem autor, em
    * vez de inventar um usuario falso.
    */
+  if auth.uid() is not null then
+    select sn.full_name into v_name
+      from public.current_actor_snapshot(new.clinic_id) sn;
+  end if;
+
+  -- AUTOR: so existe quando a clinica falou E havia alguem autenticado.
   if new.direction = 'inbound' or auth.uid() is null then
     new.author_user_id       := null;
     new.author_name_snapshot := null;
   else
-    select sn.full_name into v_name
-      from public.current_actor_snapshot(new.clinic_id) sn;
     new.author_user_id       := auth.uid();
     new.author_name_snapshot := v_name;
   end if;
+
+  -- QUEM REGISTROU: vale para as duas direcoes. Nulo quando nao ha pessoa —
+  -- e o caso do webhook, que nao deve inventar um usuario falso.
+  new.recorded_by_user_id       := auth.uid();
+  new.recorded_by_name_snapshot := case when auth.uid() is null then null else v_name end;
 
   return new;
 end;
@@ -756,11 +785,24 @@ security definer
 set search_path = ''
 as $$
 begin
+  /*
+   * Paciente ja vinculado na criacao entra no metadata da CRIACAO.
+   *
+   * E deliberado NAO emitir um patient_linked separado: nao houve operacao de
+   * vinculo, houve uma conversa que ja nasceu sabendo de quem era. Fabricar o
+   * evento diria que alguem executou uma acao que ninguem executou, e o log
+   * passaria a descrever um passado que nao aconteceu.
+   *
+   * Vinculo POSTERIOR continua gerando patient_linked pela funcao propria.
+   */
   insert into public.conversation_events
     (clinic_id, conversation_id, event_type, metadata)
   values
     (new.clinic_id, new.id, 'conversation_created',
-     jsonb_build_object('channel', new.channel));
+     case when new.patient_id is null
+          then jsonb_build_object('channel', new.channel)
+          else jsonb_build_object('channel', new.channel, 'patient_id', new.patient_id)
+     end);
   return null;
 end;
 $$;
@@ -840,9 +882,20 @@ declare
   v public.conversations%rowtype;
 begin
   select * into v from public.conversations where id = p_conversation_id;
-  if not found then
+
+  /*
+   * Revalida o vinculo, e nao so a existencia.
+   *
+   * Quem chama ja verificou antes do UPDATE, mas entre aquela verificacao e
+   * esta releitura o membership pode ter sido revogado por outra transacao. A
+   * janela e estreita e provavelmente nunca aconteceria — e e exatamente por
+   * isso que ninguem notaria se acontecesse, devolvendo o estado de uma
+   * conversa a quem acabou de perder o acesso a ela.
+   */
+  if not found or not public.is_clinic_member(v.clinic_id) then
     return jsonb_build_object('outcome', 'not_found');
   end if;
+
   return jsonb_build_object('outcome', 'conflict',
                             'conversation', public.conversation_row_json(v));
 end;
@@ -1159,7 +1212,213 @@ grant execute on function public.conversation_set_status(uuid, integer, public.c
   to authenticated;
 grant execute on function public.conversation_link_patient(uuid, integer, uuid) to authenticated;
 grant execute on function public.conversation_unlink_patient(uuid, integer)     to authenticated;
-grant execute on function public.conversation_log_appointment(uuid, uuid)       to authenticated;
+-- conversation_log_appointment NAO e exposta na v0.1.
+--
+-- Ela prova TENANT (o agendamento e desta clinica), mas nao prova PROVENIENCIA
+-- (que ele nasceu desta conversa). Exposta, qualquer membro poderia afirmar
+-- depois que um agendamento qualquer veio de uma conversa qualquer — e um log
+-- auditavel construido sobre afirmacao do cliente nao audita nada.
+--
+-- Fica pronta, com o event_type e a validacao tenant-first no lugar. Quando a
+-- API implementar "novo agendamento a partir desta conversa", a proveniencia
+-- sera registrada JUNTO da criacao real do agendamento, num caminho unico.
+revoke execute on function public.conversation_log_appointment(uuid, uuid) from authenticated;
 
 -- conversation_conflict e conversation_row_json sao auxiliares internas: nao
 -- ha motivo para o cliente chama-las diretamente.
+
+-- =============================================================================
+-- CRIACAO CONTROLADA
+--
+-- Por que INSERT direto saiu de `conversations` e de `messages`:
+--
+-- Com INSERT concedido, o cliente escolhia campos que sao invariantes do
+-- dominio, nao dados de entrada — status, assigned_to, version, os timestamps
+-- de atividade. Nenhum deles vaza tenant, mas todos pulam as regras: uma
+-- conversa podia nascer `resolved`, ja atribuida a alguem, com version 7 e com
+-- last_inbound_at no futuro. O log registraria uma criacao que nao corresponde
+-- ao que o sistema considera uma criacao.
+--
+-- Aqui o cliente informa so o que e informacao: com quem a clinica falou, e a
+-- que paciente isso pertence. O resto o banco decide.
+-- =============================================================================
+
+create or replace function public.conversation_create_manual(
+  p_clinic_id             uuid,
+  p_contact_phone_e164    text default null,
+  p_contact_name_snapshot text default null,
+  p_patient_id            uuid default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_new      public.conversations%rowtype;
+  v_existente public.conversations%rowtype;
+begin
+  -- SECURITY DEFINER nao passa por RLS: o vinculo e conferido aqui, explicito.
+  if not public.is_clinic_member(p_clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  begin
+    insert into public.conversations (
+      clinic_id,
+      channel,                -- sempre manual: esta funcao nao cria outra coisa
+      provider,               -- manual nao tem infraestrutura de entrega
+      provider_contact_id,
+      contact_phone_e164,
+      contact_name_snapshot,
+      patient_id,
+      status,                 -- toda conversa nasce na fila
+      assigned_to             -- e sem dono
+      -- version, created_at e updated_at ficam com o DEFAULT da tabela:
+      -- 1 e now(). Nao sao parametro porque nao sao informacao de ninguem.
+    ) values (
+      p_clinic_id,
+      'manual',
+      null,
+      null,
+      nullif(btrim(coalesce(p_contact_phone_e164, '')), ''),
+      nullif(btrim(coalesce(p_contact_name_snapshot, '')), ''),
+      p_patient_id,
+      'open',
+      null
+    )
+    returning * into v_new;
+  exception
+    when unique_violation then
+      /*
+       * Ja existe thread para este telefone neste canal.
+       *
+       * Devolver o erro cru obrigaria todo chamador a saber o que 23505
+       * significa aqui e a ir buscar a conversa existente. Como a identidade e
+       * justamente "uma thread por telefone", achar a existente E a resposta
+       * certa — a recepcao quer abrir a conversa daquela pessoa, nao criar
+       * outra.
+       */
+      select * into v_existente
+        from public.conversations
+       where clinic_id = p_clinic_id
+         and channel = 'manual'
+         and contact_phone_e164 = nullif(btrim(coalesce(p_contact_phone_e164, '')), '');
+
+      if not found then
+        raise; -- colisao por outro motivo: nao mascarar
+      end if;
+
+      return jsonb_build_object('outcome', 'exists',
+                                'conversation', public.conversation_row_json(v_existente));
+  end;
+
+  return jsonb_build_object('outcome', 'ok',
+                            'conversation', public.conversation_row_json(v_new));
+end;
+$$;
+
+-- =============================================================================
+-- Mensagem manual
+--
+-- `clinic_id` NAO e parametro: e derivado da conversa. Aceita-lo abriria a
+-- possibilidade de gravar a mensagem numa clinica e apontar para a conversa de
+-- outra — a FK composta recusaria, mas o certo e o dado nao existir para ser
+-- recusado.
+-- =============================================================================
+
+create or replace function public.message_row_json(m public.messages)
+returns jsonb
+language sql
+immutable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'id', m.id,
+    'clinicId', m.clinic_id,
+    'conversationId', m.conversation_id,
+    'channel', m.channel,
+    'direction', m.direction,
+    'body', m.body,
+    'occurredAt', m.occurred_at,
+    'authorUserId', m.author_user_id,
+    'authorName', m.author_name_snapshot,
+    'recordedByUserId', m.recorded_by_user_id,
+    'recordedByName', m.recorded_by_name_snapshot,
+    'deliveryStatus', m.delivery_status,
+    'createdAt', m.created_at
+  );
+$$;
+
+create or replace function public.conversation_add_manual_message(
+  p_conversation_id uuid,
+  p_direction       public.message_direction,
+  p_body            text,
+  p_occurred_at     timestamptz default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_conv public.conversations%rowtype;
+  v_msg  public.messages%rowtype;
+  v_body text;
+begin
+  select * into v_conv from public.conversations where id = p_conversation_id;
+  if not found or not public.is_clinic_member(v_conv.clinic_id) then
+    return jsonb_build_object('outcome', 'not_found');
+  end if;
+
+  /*
+   * Registro manual so entra em conversa manual.
+   *
+   * Numa thread de WhatsApp, gravar uma mensagem "a mao" produziria uma linha
+   * indistinguivel das que o provedor entregou — e ninguem depois saberia dizer
+   * se aquilo foi realmente dito no canal ou se alguem digitou. Quando houver
+   * provedor, mensagem daquele canal entra pelo adaptador dele.
+   */
+  if v_conv.channel <> 'manual' then
+    return jsonb_build_object('outcome', 'not_manual');
+  end if;
+
+  v_body := btrim(coalesce(p_body, ''));
+  if v_body = '' then
+    return jsonb_build_object('outcome', 'invalid_body');
+  end if;
+
+  insert into public.messages (
+    clinic_id,               -- derivado da conversa, nunca do cliente
+    conversation_id,
+    channel,                 -- o trigger recarimba a partir da conversa
+    direction,
+    body,
+    occurred_at              -- omitido = agora, no relogio do servidor
+    -- author_*, recorded_by_* e delivery_status ficam de fora: os dois
+    -- primeiros sao carimbados por trigger e o terceiro nao existe em manual.
+  ) values (
+    v_conv.clinic_id,
+    v_conv.id,
+    'manual',
+    p_direction,
+    v_body,
+    coalesce(p_occurred_at, now())
+  )
+  returning * into v_msg;
+
+  return jsonb_build_object('outcome', 'ok',
+                            'message', public.message_row_json(v_msg));
+end;
+$$;
+
+revoke execute on function public.message_row_json(public.messages) from public, anon;
+revoke execute on function public.conversation_create_manual(uuid, text, text, uuid)
+  from public, anon;
+revoke execute on function
+  public.conversation_add_manual_message(uuid, public.message_direction, text, timestamptz)
+  from public, anon;
+
+grant execute on function public.conversation_create_manual(uuid, text, text, uuid)
+  to authenticated;
+grant execute on function
+  public.conversation_add_manual_message(uuid, public.message_direction, text, timestamptz)
+  to authenticated;
