@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Service } from '@clinicas/shared'
+import { IconEdit, IconPlus } from '../../../ui/icons'
 import { saveServiceAction, type AgendaActionState } from '../agenda-actions'
 
 const initialState: AgendaActionState = { error: null }
@@ -12,51 +13,84 @@ function formatPrice(priceCents: number | null): string {
   return (priceCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
+/** 90 -> "1h30". Minuto puro fica ilegivel acima de uma hora. */
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, '0')}`
+}
+
 export function ServicesManager({ services }: { services: Service[] }) {
   const router = useRouter()
   const [editing, setEditing] = useState<Service | null | 'new'>(null)
 
+  const ativos = services.filter((s) => s.active).length
+
   return (
-    <>
-      <div className="row">
-        <p className="muted">{services.length} servico(s)</p>
+    <div className="content">
+      <div className="page-head">
+        <div>
+          <h1>Serviços</h1>
+          <p className="page-sub">
+            {services.length} {services.length === 1 ? 'cadastrado' : 'cadastrados'}
+            {services.length > 0 ? ` · ${ativos} ${ativos === 1 ? 'ativo' : 'ativos'}` : ''}
+          </p>
+        </div>
         <button type="button" onClick={() => setEditing('new')}>
-          Novo servico
+          <IconPlus /> Novo serviço
         </button>
       </div>
 
-      <div className="card">
+      <section className="card">
         {services.length === 0 ? (
-          <p className="muted">Nenhum servico cadastrado.</p>
+          <p className="empty">
+            Nenhum serviço cadastrado ainda.
+            <br />A duração do serviço é o que calcula o término de cada agendamento.
+          </p>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Nome</th>
-                <th>Duracao</th>
-                <th>Preco</th>
-                <th>Situacao</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {services.map((service) => (
-                <tr key={service.id}>
-                  <td>{service.name}</td>
-                  <td>{service.durationMinutes} min</td>
-                  <td>{formatPrice(service.priceCents)}</td>
-                  <td>{service.active ? 'Ativo' : 'Inativo'}</td>
-                  <td>
-                    <button type="button" className="secondary" onClick={() => setEditing(service)}>
-                      Editar
-                    </button>
-                  </td>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th className="num">Duração</th>
+                  <th className="num">Preço</th>
+                  <th>Situação</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {services.map((service) => (
+                  <tr key={service.id}>
+                    <td style={{ fontWeight: 550 }}>{service.name}</td>
+                    <td className="num">{formatDuration(service.durationMinutes)}</td>
+                    <td className={`num ${service.priceCents === null ? 'faint' : ''}`}>
+                      {formatPrice(service.priceCents)}
+                    </td>
+                    <td>
+                      <span className={`badge ${service.active ? 'ok' : 'off'}`}>
+                        {service.active ? 'Ativo' : 'Inativo'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="cell-actions">
+                        <button
+                          type="button"
+                          className="secondary sm"
+                          onClick={() => setEditing(service)}
+                        >
+                          <IconEdit /> Editar
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </section>
 
       {editing ? (
         <ServiceForm
@@ -68,7 +102,7 @@ export function ServicesManager({ services }: { services: Service[] }) {
           }}
         />
       ) : null}
-    </>
+    </div>
   )
 }
 
@@ -90,48 +124,60 @@ function ServiceForm({
   }, [state.ok])
 
   return (
-    <div className="drawer-backdrop" role="dialog" aria-modal="true" aria-label="Servico">
+    <div className="drawer-backdrop" role="dialog" aria-modal="true" aria-label="Serviço">
       <div className="drawer">
-        <div className="row">
-          <h2>{service ? 'Editar servico' : 'Novo servico'}</h2>
-          <button type="button" className="secondary" onClick={onClose}>
+        <div className="drawer-head">
+          <h2>{service ? 'Editar serviço' : 'Novo serviço'}</h2>
+          <button type="button" className="secondary sm" onClick={onClose}>
             Fechar
           </button>
         </div>
+
         <form action={formAction}>
           <label>
             Nome
             <input type="text" name="name" required defaultValue={service?.name ?? ''} />
           </label>
-          <label>
-            Duracao (minutos)
-            <input
-              type="number"
-              name="durationMinutes"
-              required
-              min={1}
-              max={480}
-              defaultValue={service?.durationMinutes ?? 30}
-            />
-          </label>
-          <label>
-            Preco em reais (opcional)
-            <input
-              type="number"
-              name="priceReais"
-              min={0}
-              step="0.01"
-              defaultValue={
-                service?.priceCents !== null && service !== null ? service.priceCents / 100 : ''
-              }
-            />
-          </label>
+
+          <div className="field-row">
+            <label>
+              Duração (minutos)
+              <input
+                type="number"
+                name="durationMinutes"
+                required
+                min={1}
+                max={480}
+                defaultValue={service?.durationMinutes ?? 30}
+              />
+            </label>
+            <label>
+              Preço em reais
+              <input
+                type="number"
+                name="priceReais"
+                min={0}
+                step="0.01"
+                placeholder="Opcional"
+                defaultValue={
+                  service?.priceCents !== null && service !== null ? service.priceCents / 100 : ''
+                }
+              />
+            </label>
+          </div>
+
           <label className="inline">
             <input type="checkbox" name="active" defaultChecked={service?.active ?? true} />
-            Ativo
+            Disponível para agendamento
           </label>
-          {state.error ? <p className="error">{state.error}</p> : null}
-          <button type="submit" disabled={pending}>
+
+          {state.error ? (
+            <p className="error" role="alert">
+              {state.error}
+            </p>
+          ) : null}
+
+          <button type="submit" className="block" disabled={pending}>
             {pending ? 'Salvando…' : 'Salvar'}
           </button>
         </form>

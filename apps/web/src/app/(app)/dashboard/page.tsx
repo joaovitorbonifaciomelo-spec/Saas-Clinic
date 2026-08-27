@@ -15,6 +15,9 @@ import {
   IconClock,
   IconPlus,
   IconRefresh,
+  IconSearch,
+  IconStethoscope,
+  IconTag,
   IconUsers,
 } from '../../ui/icons'
 import { TodayTimeline } from './today-timeline'
@@ -101,17 +104,67 @@ export default async function TodayPage() {
       </div>
 
       <div className="today-grid">
-        <section className="card">
-          <div className="card-head">
-            <h2>Agenda de hoje</h2>
-            <Link href={`/agenda?date=${today}`} className="btn ghost sm">
-              Ver agenda completa →
-            </Link>
-          </div>
-          <TodayTimeline appointments={appointments} timezone={timezone} />
-        </section>
+        {/*
+          As duas colunas empilham cards. Antes a esquerda era uma secao solta e
+          a direita uma pilha: com poucas consultas, a esquerda terminava no meio
+          da tela e a direita seguia sozinha por mais 300px.
+        */}
+        <div className="today-col">
+          <section className="card">
+            <div className="card-head">
+              <h2>Agenda de hoje</h2>
+              <Link href={`/agenda?date=${today}`} className="btn ghost sm">
+                Ver agenda completa →
+              </Link>
+            </div>
+            <TodayTimeline appointments={appointments} timezone={timezone} />
+          </section>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+          {/*
+            Acoes rapidas: SO navegacao para telas que ja existem. Nenhum
+            contador, nenhum aviso, nenhum modulo futuro disfarcado de atalho —
+            atalho para tela inexistente e promessa quebrada no clique.
+          */}
+          <section className="card">
+            <div className="card-head">
+              <h2>Ações rápidas</h2>
+            </div>
+            <ul className="quick-actions">
+              <li>
+                <Link href={`/agenda?date=${today}&novo=1`} className="quick-action">
+                  <IconPlus size={16} /> Novo agendamento
+                </Link>
+              </li>
+              <li>
+                <Link href="/patients/new" className="quick-action">
+                  <IconUsers size={16} /> Novo paciente
+                </Link>
+              </li>
+              <li>
+                <Link href={`/agenda?date=${today}&view=week`} className="quick-action">
+                  <IconCalendar size={16} /> Agenda da semana
+                </Link>
+              </li>
+              <li>
+                <Link href="/agenda/professionals" className="quick-action">
+                  <IconStethoscope size={16} /> Profissionais
+                </Link>
+              </li>
+              <li>
+                <Link href="/patients" className="quick-action">
+                  <IconSearch size={16} /> Buscar paciente
+                </Link>
+              </li>
+              <li>
+                <Link href="/agenda/services" className="quick-action">
+                  <IconTag size={16} /> Serviços
+                </Link>
+              </li>
+            </ul>
+          </section>
+        </div>
+
+        <div className="today-col">
           <section className="card">
             <div className="card-head">
               <h2>Precisa da sua atenção</h2>
@@ -120,7 +173,21 @@ export default async function TodayPage() {
               ) : null}
             </div>
             {precisaAtencao.length === 0 ? (
-              <p className="empty">Nada pendente para hoje.</p>
+              /*
+                Faixa, nao card vazio. Um bloco de 100px de altura centralizando
+                "nada pendente" gastava a mesma area de uma lista cheia para
+                dizer que nao ha lista — e empurrava o resto da coluna para
+                baixo. Ausencia de pendencia e boa noticia e cabe em uma linha.
+              */
+              <div className="attn-ok">
+                <span className="attn-ok-icon">
+                  <IconCheck size={17} />
+                </span>
+                <span>
+                  <span className="attn-ok-title">Tudo em dia</span>
+                  <span className="attn-ok-sub">Nenhuma ação pendente para hoje.</span>
+                </span>
+              </div>
             ) : (
               <ul className="plain-list">
                 {precisaAtencao.map((a) => (
@@ -185,6 +252,7 @@ export default async function TodayPage() {
               </ul>
             )}
           </section>
+
         </div>
       </div>
     </div>

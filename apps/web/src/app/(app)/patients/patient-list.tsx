@@ -55,15 +55,20 @@ export function PatientList({
             aria-label="Buscar pacientes"
           />
         </div>
-        <Link href="/patients/new" className="btn sm" title="Novo paciente">
-          <IconPlus />
-        </Link>
       </div>
 
+      {/*
+        O botao ficava ao lado da busca como um "+" sozinho, sem dizer o que
+        criava. Aqui ele tem nome, divide a faixa com a contagem e nao rouba
+        largura do campo de busca.
+      */}
       <div className="master-meta">
         <span className="label">
           {q ? `${filtrados.length} de ${patients.length}` : `${patients.length} pacientes`}
         </span>
+        <Link href="/patients/new" className="btn sm">
+          <IconPlus size={14} /> Novo paciente
+        </Link>
       </div>
 
       <ul className="master-list">

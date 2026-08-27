@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import type { Service } from '@clinicas/shared'
 import { apiFetch } from '../../../../lib/api'
 import { getActiveSession } from '../../../session'
@@ -12,13 +11,5 @@ export default async function ServicesPage() {
     clinicId: activeClinic.clinicId,
   })
 
-  return (
-    <main className="container">
-      <div className="row">
-        <h1>Servicos</h1>
-        <Link href="/agenda">Voltar para a agenda</Link>
-      </div>
-      <ServicesManager services={services} />
-    </main>
-  )
+  return <ServicesManager services={services} />
 }

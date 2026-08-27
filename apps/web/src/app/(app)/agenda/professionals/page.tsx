@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import type { AvailabilityBlock, Professional } from '@clinicas/shared'
 import { apiFetch } from '../../../../lib/api'
 import { getActiveSession } from '../../../session'
@@ -22,16 +21,9 @@ export default async function ProfessionalsPage() {
   )
 
   return (
-    <main className="container">
-      <div className="row">
-        <h1>Profissionais</h1>
-        <Link href="/agenda">Voltar para a agenda</Link>
-      </div>
-
-      <ProfessionalsManager
-        professionals={professionals}
-        availabilityByProfessional={Object.fromEntries(availability)}
-      />
-    </main>
+    <ProfessionalsManager
+      professionals={professionals}
+      availabilityByProfessional={Object.fromEntries(availability)}
+    />
   )
 }

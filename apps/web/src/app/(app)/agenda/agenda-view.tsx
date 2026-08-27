@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
+  APPOINTMENT_STATUS_LABELS,
   WEEKDAY_LABELS,
   type AppointmentWithRelations,
   type AvailabilityBlock,
@@ -42,6 +43,7 @@ export function AgendaView(props: AgendaViewProps) {
   const [drawer, setDrawer] = useState<
     | { mode: 'create'; date: string; time?: string; professionalId?: string }
     | { mode: 'edit'; appointment: AppointmentWithRelations }
+    | { mode: 'group'; appointments: AppointmentWithRelations[] }
     | null
   >(props.openNew ? { mode: 'create', date: props.date } : null)
 
@@ -249,47 +251,73 @@ export function AgendaView(props: AgendaViewProps) {
         timezone={props.timezone}
         overlapping={overlapping}
         outside={outside}
+        /*
+         * Agrupa a partir de 3 faixas na semana; no dia, nunca.
+         *
+         * Duas faixas ainda cabem: a coluna de um dia da semana tem ~150px e
+         * metade disso mostra um primeiro nome com reticencias, que da para
+         * reconhecer. Tres cabem ~50px, e ai o nome vira quatro letras — vale
+         * mais mostrar "3 simultaneos" e abrir a lista.
+         */
+        groupFrom={props.view === 'week' ? 3 : undefined}
         onSelect={(a) => setDrawer({ mode: 'edit', appointment: a })}
+        onOpenGroup={(appointments) => setDrawer({ mode: 'group', appointments })}
         onCreate={(dayKey, time, professionalId) =>
           setDrawer({ mode: 'create', date: dayKey, time, professionalId })
         }
       />
 
+      {/*
+        Dez itens numa fila unica viravam uma parede de texto pequeno. Duas
+        linhas rotuladas ocupam a mesma altura e separam o que e status
+        (todo agendamento tem um) do que e marcacao excepcional (a minoria).
+      */}
       <div className="agenda-legend">
-        <span>
-          <span className="dot confirmed" /> Confirmado
-        </span>
-        <span>
-          <span className="dot awaiting_confirmation" /> Aguardando confirmação
-        </span>
-        <span>
-          <span className="dot scheduled" /> Agendado
-        </span>
-        <span>
-          <span className="dot reschedule_requested" /> Reagendamento solicitado
-        </span>
-        <span>
-          <span className="dot completed" /> Realizado
-        </span>
-        <span>
-          <span className="dot no_show" /> Falta
-        </span>
-        <span>
-          <span className="dot cancelled" /> Cancelado
-        </span>
-        <span className="legend-sep" />
-        <span>
-          <span className="swatch avail" /> Faixa de atendimento
-        </span>
-        <span>
-          <span className="flag">encaixe</span> sobreposição confirmada
-        </span>
-        <span>
-          <span className="flag alt">fora do horário</span> override confirmado
-        </span>
+        <div className="legend-group">
+          <span className="legend-title">Status</span>
+          {(
+            [
+              'confirmed',
+              'awaiting_confirmation',
+              'scheduled',
+              'reschedule_requested',
+              'completed',
+              'no_show',
+              'cancelled',
+            ] as const
+          ).map((status) => (
+            <span key={status}>
+              <span className={`dot ${status}`} /> {APPOINTMENT_STATUS_LABELS[status]}
+            </span>
+          ))}
+        </div>
+        <div className="legend-group">
+          <span className="legend-title">Marcações</span>
+          <span>
+            <span className="swatch avail" /> Faixa de atendimento
+          </span>
+          <span>
+            <span className="flag">encaixe</span> sobreposição confirmada
+          </span>
+          <span>
+            <span className="flag alt">fora do horário</span> override confirmado
+          </span>
+          <span>
+            <span className="legend-stack" /> vários no mesmo intervalo
+          </span>
+        </div>
       </div>
 
-      {drawer ? (
+      {drawer?.mode === 'group' ? (
+        <GroupDrawer
+          appointments={drawer.appointments}
+          timezone={props.timezone}
+          onClose={() => setDrawer(null)}
+          onSelect={(a) => setDrawer({ mode: 'edit', appointment: a })}
+        />
+      ) : null}
+
+      {drawer && drawer.mode !== 'group' ? (
         <AppointmentDrawer
           timezone={props.timezone}
           patients={props.patients}
@@ -308,5 +336,68 @@ export function AgendaView(props: AgendaViewProps) {
         />
       ) : null}
     </>
+  )
+}
+
+/**
+ * Lista os agendamentos de um bloco agrupado da semana.
+ *
+ * Existe porque a grade agrupa quando ha tres ou mais no mesmo horario: o que
+ * some da grade tem que reaparecer inteiro em algum lugar, e clicar num bloco
+ * so para descobrir que ele esconde tres agendamentos seria pior que a versao
+ * ilegivel. Daqui, clicar numa linha abre o agendamento como sempre.
+ */
+function GroupDrawer({
+  appointments,
+  timezone,
+  onClose,
+  onSelect,
+}: {
+  appointments: AppointmentWithRelations[]
+  timezone: string
+  onClose: () => void
+  onSelect: (appointment: AppointmentWithRelations) => void
+}) {
+  const ordenados = [...appointments].sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+  const dia = localDateKey(new Date(ordenados[0]!.startsAt), timezone)
+
+  return (
+    <div
+      className="drawer-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Agendamentos neste intervalo"
+    >
+      <div className="drawer">
+        <div className="drawer-head">
+          <h2>{ordenados.length} agendamentos neste intervalo</h2>
+          <button type="button" className="secondary sm" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+
+        <p className="muted">{fullDateLabel(dia)}</p>
+
+        <ul className="group-list">
+          {ordenados.map((a) => (
+            <li key={a.id}>
+              <button type="button" className="group-row" onClick={() => onSelect(a)}>
+                <span className="group-time">
+                  {localTimeLabel(a.startsAt, timezone)}–{localTimeLabel(a.endsAt, timezone)}
+                </span>
+                <span className="group-who">
+                  <span className="group-name">{a.patientName}</span>
+                  <span className="faint">
+                    {a.professionalName}
+                    {a.serviceName ? ` · ${a.serviceName}` : ''}
+                  </span>
+                </span>
+                <span className={`badge ${a.status}`}>{APPOINTMENT_STATUS_LABELS[a.status]}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   )
 }

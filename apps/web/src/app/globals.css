@@ -2441,3 +2441,444 @@ tbody tr:hover {
     padding-right: 16px;
   }
 }
+
+/* =============================================================================
+   REFINO — rodada 2
+   ============================================================================= */
+
+/* --- Hoje: estado vazio compacto ------------------------------------------
+   Card grande com "nada pendente" no meio ocupava a mesma altura de uma lista
+   cheia para dizer que nao ha nada. Ausencia de pendencia e boa noticia: cabe
+   numa faixa. */
+.attn-ok {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px var(--s4);
+}
+.attn-ok-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--st-confirmed-bg);
+  color: var(--st-confirmed-fg);
+}
+.attn-ok-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.attn-ok-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- Hoje: acoes rapidas ---------------------------------------------------
+   Somente navegacao para telas que existem. Nenhum contador, nenhum aviso. */
+.quick-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.quick-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px var(--s4);
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ink-2);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+}
+.quick-actions li:nth-child(2n) .quick-action {
+  border-right: 0;
+}
+.quick-actions li:nth-last-child(-n + 2) .quick-action {
+  border-bottom: 0;
+}
+.quick-action:hover {
+  background: var(--surface-sunk);
+  color: var(--ink);
+  text-decoration: none;
+}
+.quick-action svg {
+  color: var(--brand);
+  flex: none;
+}
+
+/* --- Agenda: fundo pastel mais presente ------------------------------------
+   Tokens proprios do bloco da grade, nao os do badge: o bloco e uma superficie
+   grande vista de longe e precisa de mais cor; o badge e um selo pequeno sobre
+   fundo branco e ficaria pesado com o mesmo tom. */
+:root {
+  --ag-scheduled-bg: #eef2f8;
+  --ag-awaiting-bg: #ffeed2;
+  --ag-confirmed-bg: #d6f0e3;
+  --ag-reschedule-bg: #e9dffa;
+  --ag-completed-bg: #d5ebeb;
+  --ag-noshow-bg: #fadbe5;
+}
+.ag-appt.scheduled {
+  background: var(--ag-scheduled-bg);
+}
+.ag-appt.awaiting_confirmation {
+  background: var(--ag-awaiting-bg);
+}
+.ag-appt.confirmed {
+  background: var(--ag-confirmed-bg);
+}
+.ag-appt.reschedule_requested {
+  background: var(--ag-reschedule-bg);
+}
+.ag-appt.completed {
+  background: var(--ag-completed-bg);
+}
+.ag-appt.no_show {
+  background: var(--ag-noshow-bg);
+}
+
+/* --- Agenda: bloco de sobreposicao intensa ---------------------------------
+   Na semana, tres colunas paralelas dentro de uma coluna de dia sobram ~50px
+   por agendamento e o nome vira quatro letras. Aqui o grupo vira um bloco so,
+   com a contagem, e a lista completa abre no painel lateral. Nenhum
+   agendamento some — muda so a representacao. */
+.ag-cluster {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  padding: 4px 7px;
+  text-align: left;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--brand);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11.5px;
+  line-height: 1.35;
+  cursor: pointer;
+  /* Efeito de pilha: duas folhas atras dizem "tem mais de um aqui" antes de
+     qualquer texto ser lido. */
+  box-shadow:
+    3px -3px 0 -1px var(--surface),
+    3px -3px 0 0 var(--line-strong),
+    var(--shadow);
+}
+.ag-cluster:hover {
+  background: var(--surface-hover);
+  z-index: 6;
+}
+.ag-cluster-time {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 620;
+  color: var(--muted);
+}
+.ag-cluster-name {
+  display: block;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 570;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ag-cluster-more {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--brand);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Agenda: legenda agrupada ---------------------------------------------
+   Dez itens numa fila unica viravam uma parede. Duas linhas rotuladas ocupam a
+   mesma altura e separam o que e status do que e marcacao excepcional. */
+.agenda-legend {
+  display: flex;
+  flex-direction: column;
+  /* Explicito: a regra anterior desta classe era uma fila horizontal e deixou
+     align-items:center para tras. Num flex column isso centraliza cada linha
+     no eixo horizontal, e a legenda inteira aparecia deslocada do card. */
+  align-items: stretch;
+  gap: 6px;
+  padding: 4px 2px 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.legend-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+}
+.legend-title {
+  font-size: 10px;
+  font-weight: 660;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--faint);
+  width: 74px;
+  flex: none;
+}
+.legend-group > span:not(.legend-title) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* --- Pacientes: selecao mais evidente --------------------------------------
+   O item selecionado comanda o painel inteiro a direita; precisa ser obvio de
+   relance qual linha esta mandando. */
+.master-item.is-selected {
+  background: var(--brand-soft);
+  border-left-color: var(--brand);
+  border-left-width: 3px;
+  padding-left: calc(var(--s4) - 1px);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+}
+.master-item.is-selected .master-name {
+  font-weight: 640;
+  color: var(--ink);
+}
+.master-item.is-selected .faint {
+  color: var(--ink-2);
+}
+
+/* Contagem e acao na mesma faixa: o botao "+" sozinho nao dizia o que criava. */
+.master-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: 8px 10px 8px var(--s4);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* --- badges de situacao (profissionais, servicos) --------------------------
+   Ativo/inativo nao e status de agendamento; par proprio para nao emprestar
+   significado de outra coisa. */
+.badge.ok {
+  background: var(--st-confirmed-bg);
+  color: var(--st-confirmed-fg);
+}
+.badge.ok::before {
+  background: var(--st-confirmed-dot);
+}
+.badge.off {
+  background: var(--st-scheduled-bg);
+  color: var(--st-scheduled-fg);
+}
+.badge.off::before {
+  background: var(--st-scheduled-dot);
+}
+
+/* --- chips de dias da semana ----------------------------------------------
+   "5 faixas" nao diz QUAIS dias. Sete letras dizem, e ocupam menos. */
+.wk-chips {
+  display: inline-flex;
+  gap: 3px;
+}
+.wk-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 620;
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  color: var(--faint);
+}
+.wk-chip.on {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  color: var(--brand);
+}
+
+/* --- tabelas: rolagem horizontal contida ----------------------------------- */
+.table-wrap {
+  overflow-x: auto;
+}
+.cell-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+td.num,
+th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- lista de agendamentos dentro do drawer de grupo ----------------------- */
+.group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.group-list li + li .group-row {
+  border-top: 1px solid var(--line-soft);
+}
+.group-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 0;
+  border-radius: 0;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.group-row:hover {
+  background: var(--surface-sunk);
+}
+.group-row .group-time {
+  font-size: 12px;
+  font-weight: 620;
+  color: var(--muted);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.group-row .group-who {
+  min-width: 0;
+  flex: 1;
+}
+.group-row .group-name {
+  display: block;
+  font-weight: 570;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .quick-actions {
+    grid-template-columns: 1fr;
+  }
+  .quick-action {
+    border-right: 0;
+  }
+  .quick-actions li:nth-last-child(-n + 2) .quick-action {
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .quick-actions li:last-child .quick-action {
+    border-bottom: 0;
+  }
+  .legend-title {
+    width: auto;
+  }
+}
+
+/* Amostra da legenda para o bloco agrupado: mesma pilha do .ag-cluster. */
+.legend-stack {
+  width: 12px;
+  height: 10px;
+  display: inline-block;
+  border-radius: 2px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--brand);
+  box-shadow:
+    2px -2px 0 -1px var(--surface),
+    2px -2px 0 0 var(--line-strong);
+  margin-right: 3px;
+}
+
+/* --- celulas de tabela compostas ------------------------------------------ */
+.cell-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 550;
+}
+.cell-avail {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Texto so para leitor de tela: os chips de dia sao visuais, e "S T Q" lido em
+   voz alta nao significa nada. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- drawer de horarios: faixas agrupadas por dia -------------------------- */
+.avail-days {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+.avail-day {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+}
+.avail-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.avail-row input[type='time'] {
+  width: auto;
+  flex: none;
+  padding: 5px 7px;
+  font-size: 12.5px;
+}
+.avail-row select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 12.5px;
+}
+.avail-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+
+/* Coluna da tela Hoje: pilha de cards com o mesmo respiro do grid. */
+.today-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-width: 0;
+}

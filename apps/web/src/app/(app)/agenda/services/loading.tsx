@@ -1,5 +1,5 @@
 import { LoadingSkeleton } from '../../../loading-skeleton'
 
 export default function Loading() {
-  return <LoadingSkeleton title="Servicos" rows={4} />
+  return <LoadingSkeleton title="Serviços" rows={4} />
 }

@@ -37,6 +37,14 @@ export interface Column {
   professionalId?: string
 }
 
+/** Bloco de agendamentos que se encostam em cadeia dentro de uma coluna. */
+interface Grupo {
+  itens: AppointmentWithRelations[]
+  ini: number
+  fim: number
+  faixas: number
+}
+
 interface AgendaGridProps {
   columns: Column[]
   appointments: AppointmentWithRelations[]
@@ -44,7 +52,13 @@ interface AgendaGridProps {
   timezone: string
   overlapping: Set<string>
   outside: Set<string>
+  /**
+   * A partir de quantas faixas paralelas o grupo vira um bloco unico.
+   * `undefined` desliga o agrupamento — e o caso da visao Dia, onde ha largura.
+   */
+  groupFrom?: number
   onSelect: (appointment: AppointmentWithRelations) => void
+  onOpenGroup: (appointments: AppointmentWithRelations[]) => void
   onCreate: (dayKey: string, time: string, professionalId?: string) => void
 }
 
@@ -132,14 +146,18 @@ export function AgendaGrid(props: AgendaGridProps) {
      */
     const lanes = new Map<string, { lane: number; total: number }>()
     const laneEnd: number[] = []
-    let grupo: string[] = []
+    const grupos: Grupo[] = []
+    let grupo: AppointmentWithRelations[] = []
+    let grupoIni = -1
     let grupoFim = -1
 
     const fecharGrupo = () => {
       const total = Math.max(1, laneEnd.length)
-      for (const id of grupo) lanes.get(id)!.total = total
+      for (const a of grupo) lanes.get(a.id)!.total = total
+      grupos.push({ itens: grupo, ini: grupoIni, fim: grupoFim, faixas: total })
       grupo = []
       laneEnd.length = 0
+      grupoIni = -1
       grupoFim = -1
     }
 
@@ -155,12 +173,30 @@ export function AgendaGrid(props: AgendaGridProps) {
       } else laneEnd[lane] = fim
 
       lanes.set(a.id, { lane, total: 1 })
-      grupo.push(a.id)
+      grupo.push(a)
+      if (grupoIni === -1) grupoIni = ini
       grupoFim = Math.max(grupoFim, fim)
     }
     if (grupo.length > 0) fecharGrupo()
 
-    return { doDia, lanes }
+    /*
+     * Grupos densos demais para caber lado a lado viram UM bloco.
+     *
+     * `groupFrom` chega da visao: no dia, uma coluna inteira e do profissional e
+     * ha largura para faixas paralelas; na semana, sete colunas dividem a mesma
+     * largura e tres faixas sobram ~50px cada — nome vira quatro letras, o que
+     * e o mesmo que nao mostrar nome nenhum.
+     *
+     * Nada e descartado: os agendamentos do grupo continuam inteiros dentro de
+     * `itens` e a lista abre no painel lateral ao clicar.
+     */
+    const agrupados =
+      props.groupFrom === undefined
+        ? []
+        : grupos.filter((g) => g.faixas >= props.groupFrom!)
+    const escondidos = new Set(agrupados.flatMap((g) => g.itens.map((a) => a.id)))
+
+    return { doDia, lanes, agrupados, escondidos }
   }
 
   const nowKey = now ? localDateKey(now, props.timezone) : null
@@ -189,7 +225,7 @@ export function AgendaGrid(props: AgendaGridProps) {
         </div>
 
         {props.columns.map((col) => {
-          const { doDia, lanes } = layout(col)
+          const { doDia, lanes, agrupados, escondidos } = layout(col)
           const blocos = props.availability.filter(
             (b) =>
               b.active &&
@@ -246,7 +282,51 @@ export function AgendaGrid(props: AgendaGridProps) {
                 </div>
               ) : null}
 
+              {/*
+                Sobreposicao intensa: um bloco no lugar de N microcards. O
+                horario e a contagem ficam legiveis, e a lista completa abre no
+                painel lateral ao clicar.
+              */}
+              {agrupados.map((g) => {
+                const altura = Math.max(22, ((g.fim - g.ini) / 60) * HOUR_PX - 2)
+                const util = altura - PAD_Y
+                const primeiro = g.itens[0]!
+                const ultimo = g.itens[g.itens.length - 1]!
+                const restantes = g.itens.length - 1
+                const inicio = localTimeLabel(primeiro.startsAt, props.timezone)
+                const termino = localTimeLabel(ultimo.endsAt, props.timezone)
+                return (
+                  <button
+                    key={`g-${col.key}-${g.ini}`}
+                    type="button"
+                    className="ag-cluster"
+                    onClick={() => props.onOpenGroup(g.itens)}
+                    style={{
+                      top: toTop(g.ini) + 1,
+                      height: altura,
+                      left: 2,
+                      right: 5,
+                    }}
+                    title={`${g.itens.length} agendamentos entre ${inicio} e ${termino} — clique para ver a lista`}
+                  >
+                    {util >= FITS_TWO_LINES ? (
+                      <span className="ag-cluster-time tabular">{inicio}</span>
+                    ) : null}
+                    {util >= FITS_THREE_LINES ? (
+                      <span className="ag-cluster-name">{primeiro.patientName}</span>
+                    ) : null}
+                    <span className="ag-cluster-more">
+                      {util >= FITS_THREE_LINES
+                        ? `+${restantes} agendamentos`
+                        : `${g.itens.length} agendamentos`}
+                    </span>
+                  </button>
+                )
+              })}
+
               {doDia.map((a) => {
+                // Ja representado por um bloco de grupo nesta coluna.
+                if (escondidos.has(a.id)) return null
                 const ini = localMinutes(a.startsAt, props.timezone)
                 const fim = localMinutes(a.endsAt, props.timezone)
                 const faixa = lanes.get(a.id) ?? { lane: 0, total: 1 }
