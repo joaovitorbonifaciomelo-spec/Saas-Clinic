@@ -299,3 +299,211 @@ com essa propriedade.
   `http://localhost:3000` e recusar o frontend real no CORS.
 - Sessão expirada redireciona para `/login` em vez de estourar `ApiError` numa
   rota protegida.
+
+---
+
+## 10. Clínica ativa: `active_clinic_id` é **hint**, nunca autorização
+
+O cookie `active_clinic_id` guarda o UUID da última clínica ativa do usuário.
+Ele existe por **um único motivo, que é desempenho**: sem ele, toda tela
+precisava esperar `/api/me` terminar só para descobrir qual `clinic_id` mandar
+no cabeçalho das chamadas seguintes — duas idas e voltas em série pelo Funnel
+em cada navegação.
+
+### O que ele é e o que ele não é
+
+| | |
+|---|---|
+| **É** | Um palpite sobre qual clínica o usuário estava usando. |
+| **Não é** | Prova de vínculo, credencial, ou entrada em qualquer decisão de acesso. |
+
+A autorização continua exatamente onde estava, em três camadas independentes, e
+**nenhuma delas lê este cookie**:
+
+1. **JWT do usuário** em toda chamada à API.
+2. **`ClinicMembershipGuard`** na API, que confere o vínculo no servidor.
+3. **RLS no PostgreSQL**, que é a barreira real: uma linha de outra clínica
+   simplesmente não existe para aquela sessão.
+
+### Como o palpite é usado
+
+`loadForActiveClinic` (em `apps/web/src/app/session.ts`) dispara a busca de
+dados com o palpite **em paralelo** com `getActiveSession()`, e só aproveita o
+resultado se a clínica validada pelo servidor for exatamente a do palpite.
+
+São duas travas, e a segunda existe para o caso de a primeira falhar:
+
+1. A chamada especulativa leva o JWT do próprio usuário. Palpite apontando para
+   outra clínica é negado pelo guard, e o RLS não devolveria linha nenhuma de
+   qualquer forma.
+2. Mesmo que a camada 1 falhasse, o resultado especulativo só é usado quando
+   `palpite === clínica validada`. Cookie adulterado é descartado antes de
+   virar tela.
+
+Cookie ausente, malformado, obsoleto ou apontando para clínica sem vínculo caem
+todos no mesmo lugar: o caminho normal, com a clínica que `/api/me` confirmou.
+
+### Formato e escrita
+
+Só o UUID. `httpOnly`, `SameSite=Lax`, `Secure` em produção, `Path=/`, 30 dias.
+Escrito apenas em Server Action (`signInAction` e `createClinicAction`), porque
+o Next proíbe escrever cookie durante render — e com razão: tornaria a resposta
+dependente de efeito colateral. Removido no logout.
+
+**Timezone não entra no cookie.** Ele continua vindo de `/api/me`, que é a
+fonte confiável. Guardá-lo economizaria uma ida e volta em `/agenda` e
+`/dashboard`, mas ao custo de poder mostrar o dia errado da agenda — troca
+recusada.
+
+### Consequência: quantas ondas cada rota faz
+
+| Rota | Ondas | Por quê |
+|---|---:|---|
+| `/agenda/services` | 1 | `me` ∥ `services` |
+| `/agenda/professionals` | 1 | `me` ∥ `professionals` ∥ `availability` |
+| `/patients` com `?p=` | 1 | `me` ∥ `patients` ∥ `appointments` |
+| `/patients` sem `?p=` | 2 | Precisa da lista para saber quem é o primeiro |
+| `/dashboard` | 2 | O intervalo de datas depende do timezone, que só `/api/me` traz |
+| `/agenda` | 2 | Idem |
+
+---
+
+## 11. Desempenho: o que foi medido
+
+Todas as medições abaixo foram feitas **em produção**, com Playwright e CDP,
+contra a infraestrutura real.
+
+### Custo de rede: o Funnel é o principal componente temporário
+
+O Tailscale Funnel é a exposição temporária da API enquanto não há domínio
+próprio. Medido isoladamente, com 60 amostras sequenciais:
+
+```
+min 239 | p25 243 | mediana 249 | p75 254 | p90 263 | p95 445 | max 1262 ms
+```
+
+Da Vercel (região `gru1`, São Paulo) o RTT quente é menor, ~200 ms. Numa
+navegação de 2 ondas, isso são ~400 ms de rede antes de qualquer render — a
+maior parcela isolada do tempo de tela.
+
+### A bimodalidade tinha causa: estabelecimento de conexão TLS
+
+As navegações se dividiam em dois grupos, ~700-900 ms e ~1,5-1,9 s. A suspeita
+inicial era cold start da Vercel. **Não era**: todas as amostras trazem
+`cold=0` com contadores de invocação altos, e o mesmo padrão aparece num
+servidor local já quente.
+
+O que a instrumentação mostrou é que, num render lento, **todas** as chamadas
+são lentas juntas — inclusive `/api/me`:
+
+```
+/agenda  render=416   me=194  patients=216  professionals=217
+                      appointments=217  services=218  availability=218
+/agenda  render=1221  me=595  professionals=567  patients=592
+                      availability=610  services=615  appointments=624
+```
+
+Experimento isolado, 6 requisições paralelas ao mesmo host num processo novo:
+
+```
+pool vazio : 908  904  895  866  898  866 ms
+pool quente: 250  256  250  257  250  854 ms   <- 5 reusadas, 1 conexão nova
+pool quente: 248  259  260  252  261  255 ms
+```
+
+**Cada conexão TLS nova ao Funnel custa ~640 ms da máquina local e ~380 ms da
+Vercel.** Cada instância da função tem seu próprio pool de conexões; quando o
+pool não sobrevive ao congelamento entre invocações, todas as chamadas daquele
+render pagam handshake. É isso, e não cold start, que produz a segunda moda.
+
+### Correções aplicadas (só frontend)
+
+- Toolbar da agenda e seleção de paciente com `useOptimistic` +
+  `useTransition`: o clique deixou de ficar morto por 1,4-1,6 s.
+  Feedback visual passou a 47-64 ms em todos os fluxos.
+- `/agenda/professionals` deixou de fazer uma chamada de disponibilidade por
+  profissional (1+N em série) e passou a usar
+  `GET /api/professionals/availability`.
+- `/patients` deixou de esperar a lista quando o paciente já vem em `?p=`.
+- `getAccessToken` memoizado por requisição com `cache()` do React.
+- `prefetch={false}` nos links para rotas `force-dynamic`, que o Next
+  renderizava inteiras no servidor sem ninguém ter pedido.
+
+### Otimizações deliberadamente adiadas
+
+Registradas aqui para reavaliação **durante o piloto**, com dado real de uso.
+Nenhuma foi implementada:
+
+| Item | Ganho estimado | Por que foi adiado |
+|---|---|---|
+| Reúso de conexão ao Funnel (HTTP/2 no undici, agente keep-alive) | Elimina o segundo modo inteiro (~380-640 ms) | Mudança de runtime; é hoje o maior lever isolado |
+| Endpoint agregado (`/api/bootstrap/*`) | 1 requisição = 1 conexão = zero handshake extra | Mudança de API; duplica superfície a manter |
+| Timezone disponível cedo | Levaria `/agenda` e `/dashboard` de 2 ondas para 1 (~200 ms) | Exige decisão sobre onde guardá-lo com segurança |
+| Verificação local de JWT via JWKS | ~50-100 ms por requisição | Perde detecção imediata de revogação dentro do TTL |
+
+### Instrumentação: desligada por padrão
+
+Existem duas saídas de diagnóstico, e **ambas só aparecem quando o cookie
+`perf_debug=1` está presente**. Usuário comum nunca recebe nenhuma delas:
+
+- `Server-Timing: proxyauth;dur=…` no proxy — duração do `auth.getUser()` e
+  contador de invocações da instância.
+- `<meta name="x-perf" content="…">` no render — duração de cada chamada à API.
+
+**Só sai duração.** Os nomes das marcas são fixos, escritos no código, e
+identificadores de recurso viram `:id` antes de serem registrados. Nenhum
+token, cookie, id de usuário, clínica ou paciente atravessa essa saída.
+
+---
+
+## 12. Como rodar cada bateria de testes
+
+| Comando | O que cobre | Depende de |
+|---|---|---|
+| `pnpm test` | Unitários de `packages/shared` e `apps/api` | Nada |
+| `pnpm test:isolation` | Isolamento entre clínicas e comportamento da agenda | Banco + **API acessível** |
+| `pnpm test:hint` | Segurança do cookie `active_clinic_id` | Banco + API + **app Next no ar** |
+
+### `API_URL` é obrigatório para a bateria completa
+
+Os testes de integração falam com a API por HTTP. `API_URL` aponta para ela e
+tem default `http://localhost:3333`. **Sem uma API acessível nesse endereço,
+dois arquivos falham no portão de "API precisa estar no ar" e 33 asserções
+ficam `skipped`** — o que é fácil confundir com sucesso.
+
+Contra a API já publicada:
+
+```bash
+API_URL=https://<host-da-api> pnpm test:isolation
+```
+
+Contra uma API local:
+
+```bash
+pnpm --filter @clinicas/api dev     # noutro terminal
+pnpm test:isolation
+```
+
+### `pnpm test:hint`
+
+Precisa também do app Next servindo, porque exercita cookie de verdade num
+navegador de verdade — é a única forma honesta de testar que um cookie
+adulterado não vaza dados de outro tenant.
+
+```bash
+# terminal 1
+pnpm --filter @clinicas/web build && pnpm --filter @clinicas/web start
+
+# terminal 2
+API_URL=https://<host-da-api> WEB_URL=http://localhost:3000 pnpm test:hint
+```
+
+`WEB_URL` tem default `http://localhost:3100`. Se o app não responder, a suíte
+**falha alto** em vez de passar em silêncio: teste de segurança que se
+auto-desliga é pior que teste nenhum.
+
+O que ela cobre: escrita no login, remoção no logout, onboarding populando o
+cookie, cookie correto, ausência de cookie, cinco formatos inválidos, cookie
+apontando para a clínica de outro usuário, clínica inexistente, nome da clínica
+no shell vindo do validado e não do cookie, e sessão expirada ainda indo para
+`/login`.

@@ -25,14 +25,24 @@ function isPublicPath(pathname: string): boolean {
 const PROXY_INSTANCE = Math.random().toString(36).slice(2, 6)
 let PROXY_INVOCATIONS = 0
 
+/** Cookie que liga a instrumentacao. O mesmo usado pelo <meta name="x-perf">. */
+const PERF_COOKIE = 'perf_debug'
+
 /**
- * Anexa a medicao do proxy na resposta.
+ * Anexa a medicao do proxy na resposta — SOMENTE quando o cookie `perf_debug`
+ * esta presente.
  *
- * SO DURACAO E CONTADOR. O `desc` carrega um identificador aleatorio de
- * instancia e o numero da invocacao — nada derivado de usuario, sessao,
- * clinica ou token.
+ * O gate importa: sem ele o header ia para todo visitante, e ninguem que usa a
+ * clinica tem o que fazer com o numero de invocacoes de uma instancia da
+ * funcao. Diagnostico e ferramenta de quem esta investigando, nao decoracao
+ * permanente da resposta.
+ *
+ * Mesmo ligado, so sai DURACAO E CONTADOR: o `desc` carrega um identificador
+ * aleatorio de instancia e o numero da invocacao — nada derivado de usuario,
+ * sessao, clinica ou token.
  */
-function comTiming(response: NextResponse, authMs: number): NextResponse {
+function comTiming(request: NextRequest, response: NextResponse, authMs: number): NextResponse {
+  if (request.cookies.get(PERF_COOKIE)?.value !== '1') return response
   response.headers.set(
     'Server-Timing',
     `proxyauth;dur=${authMs};desc="${PROXY_INSTANCE}-inv${PROXY_INVOCATIONS}"`,
@@ -97,15 +107,15 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/login'
     redirectUrl.searchParams.set('next', pathname)
-    return comTiming(NextResponse.redirect(redirectUrl), authMs)
+    return comTiming(request, NextResponse.redirect(redirectUrl), authMs)
   }
 
   if (user && (pathname === '/login' || pathname === '/signup')) {
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/dashboard'
     redirectUrl.search = ''
-    return comTiming(NextResponse.redirect(redirectUrl), authMs)
+    return comTiming(request, NextResponse.redirect(redirectUrl), authMs)
   }
 
-  return response
+  return comTiming(request, response, authMs)
 }
