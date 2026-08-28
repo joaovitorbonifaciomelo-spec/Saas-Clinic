@@ -3567,3 +3567,12 @@ th.num {
   margin: 0;
   padding: 0;
 }
+
+/* A barra de navegacao inferior do mobile e fixa, e `.main` ja reserva 56px
+   para ela. A altura do shell precisa descontar os mesmos 56px, senao o
+   composer fica embaixo da barra — o botao de registrar sumia atras dela. */
+@media (max-width: 768px) {
+  .at-shell {
+    height: calc(100vh - var(--topbar-h) - 56px - var(--s3) * 2);
+  }
+}
