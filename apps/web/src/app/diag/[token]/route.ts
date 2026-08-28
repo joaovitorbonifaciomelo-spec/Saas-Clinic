@@ -105,6 +105,25 @@ export async function GET(
     sequenciais.push(await tentar(base, rota, 20_000))
   }
 
+  /*
+   * CONTROLES. Sem eles, "ENOTFOUND" nao distingue tres coisas muito
+   * diferentes: o DNS da funcao estar quebrado para tudo, estar quebrado so
+   * para este dominio, ou a rede de saida bloquear o destino inteiro.
+   */
+  const controles = {
+    // DNS em geral funciona? Dominio publico, estavel, sem relacao conosco.
+    dnsGeral: await tentar('https://example.com', '/', 15_000),
+    // O apex do provedor resolve? Separa "o dominio todo" de "este host".
+    apexDoProvedor: await tentar('https://tailscale.com', '/', 15_000),
+    /*
+     * Alcanca o IP da borda sem passar por DNS? O certificado nao vai bater
+     * com um IP, entao o erro esperado e de TLS — e um erro de TLS AQUI
+     * prova que o pacote saiu e chegou. Recusa de conexao provaria bloqueio
+     * de saida.
+     */
+    porIpSemDns: await tentar('https://209.177.145.97', '/api/health', 15_000),
+  }
+
   return Response.json(
     {
       anfitriaoDaApi: anfitriao,
@@ -115,6 +134,7 @@ export async function GET(
       paralelas,
       totalParalelasMs: totalParalelas,
       sequenciais,
+      controles,
     },
     { headers: { 'cache-control': 'no-store' } },
   )
