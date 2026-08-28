@@ -7,7 +7,7 @@ import type {
 } from '@clinicas/shared'
 import { apiFetch } from '../../../lib/api'
 import { getActiveSession } from '../../session'
-import { localDateKey, rangeFor } from './agenda-time'
+import { localDateKey, rangeFor, type AgendaView as VisaoAgenda } from './agenda-time'
 import { AgendaView } from './agenda-view'
 import { PerfMeta } from '../../ui/perf-meta'
 
@@ -28,7 +28,8 @@ export default async function AgendaPage({ searchParams }: AgendaPageProps) {
   const { activeClinic } = await getActiveSession()
   const timezone = activeClinic.clinicTimezone
 
-  const view = params.view === 'week' ? 'week' : 'day'
+  const view: VisaoAgenda =
+    params.view === 'week' ? 'week' : params.view === 'month' ? 'month' : 'day'
   // "Hoje" e o hoje DA CLINICA, nao o do servidor nem o do navegador.
   const date = params.date ?? localDateKey(new Date(), timezone)
   const professionalId = params.professional ?? ''

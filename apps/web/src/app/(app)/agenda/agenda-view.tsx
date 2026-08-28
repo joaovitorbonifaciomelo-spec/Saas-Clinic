@@ -13,19 +13,24 @@ import {
 } from '@clinicas/shared'
 import {
   addDays,
+  addMonths,
   formatDateLabel,
   localDateKey,
   localTimeLabel,
+  monthLabel,
   rangeFor,
+  startOfMonth,
   weekdayOf,
+  type AgendaView as VisaoAgenda,
 } from './agenda-time'
 import { fullDateLabel, shortDateLabel } from '../../ui/format'
 import { IconChevronLeft, IconChevronRight, IconPlus } from '../../ui/icons'
 import { AgendaGrid, type Column } from './agenda-grid'
+import { AgendaMonth } from './agenda-month'
 import { AppointmentDrawer } from './appointment-drawer'
 
 interface AgendaViewProps {
-  view: 'day' | 'week'
+  view: VisaoAgenda
   date: string
   days: string[]
   timezone: string
@@ -84,7 +89,9 @@ export function AgendaView(props: AgendaViewProps) {
     next.delete('novo')
 
     startTransition(() => {
-      if (patch.view === 'day' || patch.view === 'week') setViewOtim(patch.view)
+      if (patch.view === 'day' || patch.view === 'week' || patch.view === 'month') {
+        setViewOtim(patch.view)
+      }
       if (patch.date) setDateOtim(patch.date)
       if (patch.professional !== undefined) setProfOtim(patch.professional)
       router.push(`/agenda?${next.toString()}`)
@@ -188,6 +195,13 @@ export function AgendaView(props: AgendaViewProps) {
   const step = viewOtim === 'week' ? 7 : 1
 
   /*
+   * Andar no periodo. O mes usa addMonths, ancorado no dia 1: somar 30 dias
+   * erraria em fevereiro e escorregaria um dia por mes ao longo do ano.
+   */
+  const andar = (direcao: -1 | 1): string =>
+    viewOtim === 'month' ? addMonths(dateOtim, direcao) : addDays(dateOtim, direcao * step)
+
+  /*
    * O rotulo acompanha o controle, nao os dados. `rangeFor` e funcao pura do
    * mesmo modulo que o servidor usa, entao o intervalo calculado aqui e o mesmo
    * que vai chegar — sem inventar nada e sem esperar a ida e volta.
@@ -199,9 +213,11 @@ export function AgendaView(props: AgendaViewProps) {
   const primeiro = diasOtim[0]!
   const ultimo = diasOtim[diasOtim.length - 1]!
   const periodo =
-    viewOtim === 'week'
-      ? `${shortDateLabel(primeiro)} – ${shortDateLabel(ultimo)} de ${ultimo.slice(0, 4)}`
-      : fullDateLabel(dateOtim)
+    viewOtim === 'month'
+      ? monthLabel(dateOtim)
+      : viewOtim === 'week'
+        ? `${shortDateLabel(primeiro)} – ${shortDateLabel(ultimo)} de ${ultimo.slice(0, 4)}`
+        : fullDateLabel(dateOtim)
 
   const doPeriodo = props.appointments.filter(isActive)
 
@@ -234,7 +250,7 @@ export function AgendaView(props: AgendaViewProps) {
             type="button"
             className="ghost sm"
             aria-label="Período anterior"
-            onClick={() => navigate({ date: addDays(dateOtim, -step) })}
+            onClick={() => navigate({ date: andar(-1) })}
           >
             <IconChevronLeft />
           </button>
@@ -242,7 +258,7 @@ export function AgendaView(props: AgendaViewProps) {
             type="button"
             className="ghost sm"
             aria-label="Próximo período"
-            onClick={() => navigate({ date: addDays(dateOtim, step) })}
+            onClick={() => navigate({ date: andar(1) })}
           >
             <IconChevronRight />
           </button>
@@ -286,11 +302,29 @@ export function AgendaView(props: AgendaViewProps) {
             >
               Semana
             </button>
+            <button
+              type="button"
+              aria-pressed={viewOtim === 'month'}
+              onClick={() => navigate({ view: 'month' })}
+            >
+              Mês
+            </button>
           </div>
         </div>
       </div>
 
       <div className="agenda-slot" aria-busy={pendente} data-pendente={pendente ? 'sim' : undefined}>
+        {props.view === 'month' ? (
+          <AgendaMonth
+            dias={props.days}
+            mesReferencia={startOfMonth(props.date).slice(0, 7)}
+            appointments={props.appointments}
+            timezone={props.timezone}
+            onCreate={(dayKey) => setDrawer({ mode: 'create', date: dayKey })}
+            onSelect={(a) => setDrawer({ mode: 'edit', appointment: a })}
+            onOpenDay={(dayKey) => navigate({ view: 'day', date: dayKey })}
+          />
+        ) : (
         <AgendaGrid
           columns={columns}
         appointments={props.appointments}
@@ -313,6 +347,7 @@ export function AgendaView(props: AgendaViewProps) {
             setDrawer({ mode: 'create', date: dayKey, time, professionalId })
           }
         />
+        )}
       </div>
 
       {/*
@@ -339,6 +374,13 @@ export function AgendaView(props: AgendaViewProps) {
             </span>
           ))}
         </div>
+        {/*
+          As marcacoes so existem nas grades de Dia e Semana: faixa de
+          atendimento, encaixe, override e empilhamento sao propriedades do
+          bloco de horario, e a visao Mes nao desenha horario. Manter a legenda
+          ali seria explicar simbolos que nunca aparecem.
+        */}
+        {props.view !== 'month' ? (
         <div className="legend-group">
           <span className="legend-title">Marcações</span>
           <span>
@@ -354,6 +396,7 @@ export function AgendaView(props: AgendaViewProps) {
             <span className="legend-stack" /> vários no mesmo intervalo
           </span>
         </div>
+        ) : null}
       </div>
 
       {drawer?.mode === 'group' ? (

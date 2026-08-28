@@ -3753,3 +3753,245 @@ th.num {
     display: flex;
   }
 }
+
+/* =============================================================================
+   AGENDA — VISAO MES
+
+   Panorama e navegacao. Nao reproduz o detalhe da visao Dia de proposito: o
+   valor aqui e enxergar o mes inteiro de uma vez, e isso exige que a celula
+   tenha altura previsivel.
+   ============================================================================= */
+.mes {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.mes-head {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--line);
+}
+.mes-head-cel {
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.mes-semana {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line-soft);
+}
+.mes-semana:last-child {
+  border-bottom: 0;
+}
+
+.mes-cel {
+  position: relative;
+  /* Cabe o maximo que a celula desenha: numero + 3 itens + "+N mais". Menos
+     que isso e a celula cresce no dia cheio, que e justamente o que a visao
+     Mes nao pode fazer. */
+  min-height: 126px;
+  padding: 6px;
+  border-right: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.mes-cel:last-child {
+  border-right: 0;
+}
+/* Dias vizinhos que completam a semana: presentes e legiveis, mas claramente
+   de outro mes. */
+.mes-cel.fora {
+  background: var(--surface-sunk);
+}
+.mes-cel.fora .mes-num,
+.mes-cel.fora .mes-item {
+  opacity: 0.6;
+}
+
+.mes-num {
+  position: relative;
+  z-index: 1;
+  align-self: flex-start;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  min-width: 22px;
+  justify-content: center;
+}
+.mes-num:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+/* Hoje: discreto. Um circulo cheio da marca competiria com os agendamentos. */
+.mes-cel.hoje .mes-num {
+  background: var(--brand);
+  color: #fff;
+}
+.mes-cel.hoje .mes-num:hover {
+  background: var(--brand-hover);
+  color: #fff;
+}
+
+.mes-contagem {
+  display: none;
+}
+
+.mes-itens {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mes-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 450;
+  line-height: 1.3;
+  text-align: left;
+  justify-content: flex-start;
+  min-width: 0;
+}
+.mes-item:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.mes-item .dot {
+  flex: none;
+}
+.mes-hora {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.mes-nome {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Cancelado segue o padrao das outras visoes: presente, mas apagado. */
+.mes-item.cancelled {
+  opacity: 0.55;
+}
+.mes-item.cancelled .mes-nome {
+  text-decoration: line-through;
+}
+
+.mes-mais {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--brand-hover);
+  border: 0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+.mes-mais:hover {
+  background: var(--brand-soft);
+  color: var(--brand-hover);
+}
+
+/* Area livre da celula: cria agendamento naquela data. Fica ATRAS do conteudo
+   (z-index) para nao roubar cliques dos itens nem do numero do dia. */
+.mes-vazio {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+.mes-vazio:hover {
+  background: var(--brand-soft);
+}
+
+/* --- Tablet: mesma grade, mais compacta --------------------------------- */
+@media (max-width: 1100px) {
+  .mes-cel {
+    min-height: 118px;
+    padding: 5px;
+  }
+  .mes-item {
+    font-size: 11px;
+    gap: 4px;
+  }
+  .mes-hora {
+    font-size: 10.5px;
+  }
+}
+
+/* --- Celular: grade de densidade, nao de conteudo ------------------------
+   Sete colunas com hora e nome em 390px seriam sete colunas ilegiveis. O mes
+   vira um mapa de densidade: numero do dia e quantos agendamentos ha. Tocar em
+   qualquer lugar da celula abre o Dia — "criar ao tocar no vazio" nesse tamanho
+   seria toque acidental garantido.
+   ------------------------------------------------------------------------ */
+@media (max-width: 780px) {
+  .mes-head-cel {
+    padding: 6px 2px;
+    text-align: center;
+    font-size: 10px;
+  }
+  .mes-cel {
+    min-height: 58px;
+    padding: 4px 2px;
+    align-items: center;
+    gap: 2px;
+  }
+  .mes-num {
+    align-self: center;
+    font-size: 12.5px;
+    padding: 4px;
+    min-width: 26px;
+  }
+  /* O numero cobre a celula inteira: o alvo de toque passa a ser "abrir o
+     dia", e nao "criar agendamento". */
+  .mes-num::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+  }
+  .mes-itens,
+  .mes-vazio {
+    display: none;
+  }
+  .mes-contagem {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--brand-hover);
+    background: var(--brand-soft);
+    border-radius: 999px;
+    padding: 2px 6px;
+  }
+  .mes-cel.fora .mes-contagem {
+    opacity: 0.6;
+  }
+}

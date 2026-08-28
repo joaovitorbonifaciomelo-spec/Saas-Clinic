@@ -98,6 +98,73 @@ export function startOfWeek(dateKey: string): string {
   return addDays(dateKey, -weekdayOf(dateKey))
 }
 
+/** Primeiro dia do mes que contem a data. */
+export function startOfMonth(dateKey: string): string {
+  return `${dateKey.slice(0, 7)}-01`
+}
+
+/**
+ * Anda N meses, sempre ancorado no DIA 1.
+ *
+ * Ancorar no dia 1 evita a armadilha classica: 31 de janeiro + 1 mes nao tem
+ * dia 31 em fevereiro, e a maioria das implementacoes cai em 2 ou 3 de marco.
+ * Como a visao Mes so precisa saber DE QUE MES se trata, o dia 1 e a resposta
+ * certa e nao ha caso a tratar.
+ */
+export function addMonths(dateKey: string, months: number): string {
+  const [year, month] = dateKey.split('-').map(Number)
+  const total = year! * 12 + (month! - 1) + months
+  const y = Math.floor(total / 12)
+  const m = (total % 12) + 1
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-01`
+}
+
+/**
+ * Os dias que a grade mensal desenha: do domingo da primeira semana ao sabado
+ * da ultima.
+ *
+ * Inclui dias do mes anterior e do seguinte de proposito — a grade tem semanas
+ * inteiras, e esses dias aparecem em tom secundario. Buscar o intervalo da
+ * grade INTEIRA, e nao so do mes, faz com que eles mostrem os agendamentos
+ * reais em vez de parecerem vazios por engano.
+ */
+export function monthGrid(dateKey: string): string[] {
+  const primeiro = startOfMonth(dateKey)
+  const inicio = startOfWeek(primeiro)
+  const proximoMes = addMonths(primeiro, 1)
+
+  const dias: string[] = []
+  let atual = inicio
+  // Fecha a ultima semana: para quando ja passou do mes E a semana terminou.
+  while (atual < proximoMes || weekdayOf(atual) !== 0) {
+    dias.push(atual)
+    atual = addDays(atual, 1)
+    if (dias.length > 42) break // 6 semanas e o maximo possivel
+  }
+  return dias
+}
+
+const MESES = [
+  'Janeiro',
+  'Fevereiro',
+  'Março',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+]
+
+/** "Agosto de 2026" */
+export function monthLabel(dateKey: string): string {
+  const [year, month] = dateKey.split('-').map(Number)
+  return `${MESES[month! - 1]} de ${year}`
+}
+
 export function formatDateLabel(dateKey: string): string {
   const [year, month, day] = dateKey.split('-')
   return `${day}/${month}/${year}`
@@ -107,19 +174,31 @@ export function weekdayLabel(dateKey: string): string {
   return WEEKDAY_LABELS[weekdayOf(dateKey)] ?? ''
 }
 
+export type AgendaView = 'day' | 'week' | 'month'
+
 /**
  * Intervalo semiaberto [from, to) que a API deve consultar.
  * Semiaberto para que um agendamento as 00:00 pertenca a um dia so.
  */
 export function rangeFor(
   dateKey: string,
-  view: 'day' | 'week',
+  view: AgendaView,
   timezone: string,
 ): { from: string; to: string; days: string[] } {
-  const first = view === 'week' ? startOfWeek(dateKey) : dateKey
-  const dayCount = view === 'week' ? 7 : 1
-  const days = Array.from({ length: dayCount }, (_, index) => addDays(first, index))
-  const last = addDays(first, dayCount)
+  /*
+   * O mes consulta a GRADE inteira, nao o mes civil: os dias vizinhos que
+   * completam a primeira e a ultima semana aparecem na tela e precisam mostrar
+   * o que realmente tem. Continua sendo UMA consulta.
+   */
+  const days =
+    view === 'month'
+      ? monthGrid(dateKey)
+      : view === 'week'
+        ? Array.from({ length: 7 }, (_, i) => addDays(startOfWeek(dateKey), i))
+        : [dateKey]
+
+  const first = days[0]!
+  const last = addDays(days[days.length - 1]!, 1)
 
   return {
     from: startOfLocalDay(first, timezone).toISOString(),

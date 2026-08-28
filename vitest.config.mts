@@ -30,7 +30,11 @@ export default defineConfig({
           // Estes dois dependem de coisas que a isolation nao exige:
           // o do cookie precisa do app Next no ar; o do atendimento
           // precisa das migrations 0012-0014 aplicadas.
-          exclude: ['tests/clinic-hint.test.ts', 'tests/atendimento-*.test.ts'],
+          exclude: [
+            'tests/clinic-hint.test.ts',
+            'tests/atendimento-*.test.ts',
+            'tests/agenda-mes.test.ts',
+          ],
           testTimeout: 60_000,
           hookTimeout: 120_000,
           fileParallelism: false,
@@ -48,7 +52,11 @@ export default defineConfig({
           name: 'hint',
           root: './supabase',
           environment: 'node',
-          include: ['tests/clinic-hint.test.ts', 'tests/atendimento-ui.test.ts'],
+          include: [
+            'tests/clinic-hint.test.ts',
+            'tests/atendimento-ui.test.ts',
+            'tests/agenda-mes.test.ts',
+          ],
           testTimeout: 120_000,
           hookTimeout: 180_000,
           fileParallelism: false,
