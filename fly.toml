@@ -1,0 +1,74 @@
+# =============================================================================
+# API do SaaS de clinicas — Fly.io
+#
+# Caminho publico da API. Substitui o Tailscale Funnel, que se provou
+# irresolvivel a partir do resolvedor da Vercel (`getaddrinfo ENOTFOUND
+# taild2349f.ts.net`, regiao iad1) enquanto o mesmo nome resolvia por DoH de
+# dentro da propria funcao.
+#
+# A VPS e o Funnel continuam de pe como rollback. Nada aqui os desliga.
+#
+# NAO HA SEGREDO NESTE ARQUIVO. SUPABASE_URL e SUPABASE_ANON_KEY entram por
+# `fly secrets set`, e o arquivo e versionado justamente por nao carregar nada
+# sensivel. `service_role` e a senha do banco NAO existem no runtime da API —
+# nunca existiram, e este arquivo nao e o lugar para comecarem a existir.
+# =============================================================================
+
+app = "clinic-saas-api"
+primary_region = "gru"
+
+[build]
+  # IMAGEM JA CONSTRUIDA E TESTADA, por SHA imutavel.
+  #
+  # E exatamente a mesma que roda na VPS hoje, e passou pelos smoke tests do
+  # pipeline antes de chegar ao registro: nao roda como root, nao carrega .env,
+  # nao tem marcador de segredo embutido e nao traz devDependencies.
+  #
+  # `latest` seria um ponteiro movel: o deploy deixaria de ser reproduzivel e o
+  # rollback deixaria de ser confiavel.
+  image = "ghcr.io/joaovitorbonifaciomelo-spec/saas-clinic-api:sha-7ccac7790e95bca77b85bb797e2182401c195563"
+
+[env]
+  # Publicos por natureza — a origem do frontend nao e segredo, e o NODE_ENV ja
+  # vem da imagem. Ficam aqui para o arquivo responder sozinho "como esta
+  # configurado", sem precisar consultar os secrets.
+  NODE_ENV = "production"
+  WEB_ORIGIN = "https://saas-clinic-web.vercel.app"
+  API_PORT = "3333"
+
+[http_service]
+  # 3333 e a porta que a aplicacao realmente escuta (EXPOSE 3333 na imagem,
+  # `app.listen(env.API_PORT)` com default 3333).
+  internal_port = 3333
+  force_https = true
+
+  # Sem auto-stop: o piloto tem gente de verdade usando, e o cold start de uma
+  # maquina suspensa apareceria como "o sistema travou" na recepcao da clinica.
+  # Uma maquina sempre de pe custa alguns dolares por mes e remove essa classe
+  # inteira de sintoma.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    # O mesmo endpoint que o pipeline e a VPS ja usam. Nao consulta o Supabase
+    # de proposito: um health que depende de terceiro transforma instabilidade
+    # do terceiro em maquina reiniciando em laco.
+    method = "GET"
+    path = "/api/health"
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "10s"
+
+[[restart]]
+  # Falha de processo e excecao, nao rotina. Reiniciar sempre, com limite, evita
+  # tanto ficar fora do ar quanto entrar em laco de reinicio silencioso.
+  policy = "always"
+  retries = 5
+
+[[vm]]
+  # Modesto e proporcional: a API e stateless, so traduz HTTP para PostgREST.
+  # 512 MB porque o Node em 256 MB fica no limite e o primeiro sintoma de falta
+  # de memoria seria OOM em producao, nao lentidao.
+  size = "shared-cpu-1x"
+  memory = "512mb"

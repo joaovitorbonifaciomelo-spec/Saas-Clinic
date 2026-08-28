@@ -10,6 +10,8 @@
  *     no bundle do navegador).
  *  3. Os arquivos .env.example contem apenas placeholders, nunca chave real.
  *  4. Nenhum arquivo .env real esta rastreado pelo git.
+ *  5. Nenhum JSON rastreado pelo git carrega campo de senha ou token — a regra
+ *     que faltava quando um manifesto de fixture entrou no repositorio.
  *
  * Falha com exit code 1 se alguma regra for violada.
  */
@@ -124,6 +126,72 @@ try {
   // Fora de um repositorio git: nada a verificar aqui.
 }
 
+/* -- Regra 5: manifesto de fixture com senha nao entra no repositorio -------
+ *
+ * De onde veio esta regra: um `git add -A` levou junto o manifesto de uma
+ * rodada de diagnostico, que guardava a senha da conta sintetica. Conta de
+ * teste, no projeto de desenvolvimento, apagada em seguida — mas senha em
+ * repositorio e senha em repositorio, e as quatro regras acima nao viam isso:
+ * elas procuram service_role, DB URL e prefixo NEXT_PUBLIC_, nao senha de
+ * fixture.
+ *
+ * A checagem e ESTREITA de proposito. So olha JSON rastreado pelo git e so
+ * reclama de chave cujo nome e inequivocamente credencial, com valor de texto
+ * nao vazio. Um detector generico de "parece senha" produziria falso positivo
+ * em todo lugar, e regra que grita a toa e regra que a equipe aprende a
+ * ignorar.
+ */
+const CHAVES_DE_CREDENCIAL = new Set([
+  'senha',
+  'password',
+  'accessToken',
+  'access_token',
+  'refreshToken',
+  'refresh_token',
+  'serviceRoleKey',
+  'service_role_key',
+])
+
+/** Percorre o JSON inteiro: o manifesto guardava a senha no topo, mas o
+ *  proximo pode aninhar. */
+function chavesDeCredencial(valor, caminho = []) {
+  const achados = []
+  if (Array.isArray(valor)) {
+    valor.forEach((item, i) => achados.push(...chavesDeCredencial(item, [...caminho, String(i)])))
+  } else if (valor && typeof valor === 'object') {
+    for (const [chave, dentro] of Object.entries(valor)) {
+      if (CHAVES_DE_CREDENCIAL.has(chave) && typeof dentro === 'string' && dentro.length > 0) {
+        achados.push([...caminho, chave].join('.'))
+      }
+      achados.push(...chavesDeCredencial(dentro, [...caminho, chave]))
+    }
+  }
+  return achados
+}
+
+try {
+  const jsons = execSync('git ls-files -- "*.json"', { cwd: ROOT, encoding: 'utf8' })
+    .split('\n')
+    .map((linha) => linha.trim())
+    .filter(Boolean)
+
+  for (const rel of jsons) {
+    let dados
+    try {
+      dados = JSON.parse(readFileSync(join(ROOT, rel), 'utf8'))
+    } catch {
+      continue // JSON invalido ou com comentario: nao e manifesto de fixture.
+    }
+    const achados = chavesDeCredencial(dados)
+    if (achados.length > 0) {
+      // Reporta o CAMINHO da chave, nunca o valor.
+      failures.push(`${rel}: campo de credencial rastreado pelo git (${achados.join(', ')}).`)
+    }
+  }
+} catch {
+  // Fora de um repositorio git: nada a verificar aqui.
+}
+
 if (failures.length > 0) {
   console.error('Fronteira de segredos VIOLADA:\n')
   for (const failure of failures) console.error(`  - ${failure}`)
@@ -136,3 +204,4 @@ console.log('  - service_role e DB_URL ausentes de apps/web e apps/api')
 console.log('  - nenhum segredo sob prefixo NEXT_PUBLIC_')
 console.log('  - .env.example contem apenas placeholders')
 console.log('  - nenhum .env rastreado pelo git')
+console.log('  - nenhum JSON rastreado com campo de senha/token')
