@@ -122,6 +122,32 @@ export async function GET(
      * de saida.
      */
     porIpSemDns: await tentar('https://209.177.145.97', '/api/health', 15_000),
+    // O apex do tailnet resolve? Separa "este host" de "todo o tailnet".
+    apexDoTailnet: await tentar('https://taild2349f.ts.net', '/', 15_000),
+  }
+
+  /*
+   * O CONTROLE DECISIVO: resolver o MESMO nome por DNS-over-HTTPS, de dentro
+   * da funcao, contornando o resolvedor da plataforma.
+   *
+   * Se o DoH devolver os enderecos, a rede da Vercel alcanca a resposta e o
+   * nome existe — o que sobra e o resolvedor da plataforma. Se o DoH tambem
+   * nao achar, o problema e do DNS publico e nao da Vercel.
+   */
+  let porDoH: { ok: boolean; enderecos?: string[]; status?: number; erro?: string }
+  try {
+    const res = await fetch(
+      `https://cloudflare-dns.com/dns-query?name=${anfitriao}&type=A`,
+      { headers: { accept: 'application/dns-json' }, signal: AbortSignal.timeout(15_000) },
+    )
+    const corpo = (await res.json()) as { Answer?: { data: string }[] }
+    porDoH = {
+      ok: res.ok,
+      status: res.status,
+      enderecos: (corpo.Answer ?? []).map((a) => a.data),
+    }
+  } catch (e) {
+    porDoH = { ok: false, erro: cadeiaDeCausas(e).join(' <- ') }
   }
 
   return Response.json(
@@ -135,6 +161,7 @@ export async function GET(
       totalParalelasMs: totalParalelas,
       sequenciais,
       controles,
+      porDoH,
     },
     { headers: { 'cache-control': 'no-store' } },
   )
