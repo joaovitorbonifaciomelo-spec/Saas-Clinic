@@ -3541,3 +3541,29 @@ th.num {
     display: none;
   }
 }
+
+/* -----------------------------------------------------------------------------
+   Correcao: linhas clicaveis que NAO sao botao de acao
+
+   O reset global estiliza `button` como botao primario — fundo da marca e texto
+   BRANCO. `.at-equipe-item` e `.at-paciente-item` trocavam o fundo por branco e
+   herdavam a cor: texto branco sobre branco. Os nomes estavam no DOM e
+   invisiveis na tela; so o badge, que traz cor propria, aparecia.
+   -------------------------------------------------------------------------- */
+.at-equipe-item,
+.at-paciente-item {
+  color: var(--ink);
+  font-weight: 450;
+}
+.at-equipe-item:hover:not(:disabled),
+.at-paciente-item:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+/* Listas proprias do modulo tambem precisam do reset de marcador. */
+.at-equipe,
+.at-pacientes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}

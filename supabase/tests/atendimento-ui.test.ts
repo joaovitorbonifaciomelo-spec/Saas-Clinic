@@ -407,6 +407,24 @@ describe('acoes de controle', () => {
     // Diretorio e para operacao, nao para expor contato de ninguem.
     expect(equipe).not.toContain('@')
 
+    /*
+     * COR, e nao so texto. O reset global estiliza `button` como botao
+     * primario — fundo da marca e texto BRANCO. Esta linha trocava o fundo por
+     * branco e herdava a cor: os nomes estavam no DOM e invisiveis na tela, e
+     * toda assercao de innerText passava. So a captura pegou.
+     */
+    const contraste = await page.locator('.at-equipe-item').first().evaluate((el) => {
+      // O tsconfig destes testes nao carrega a lib DOM; o acesso tipado por
+      // globalThis evita ligar a lib inteira so por uma chamada.
+      const janela = globalThis as unknown as {
+        getComputedStyle: (e: unknown) => { color: string; backgroundColor: string }
+      }
+      const estilo = janela.getComputedStyle(el)
+      return { cor: estilo.color, fundo: estilo.backgroundColor }
+    })
+    expect(contraste.cor).not.toBe(contraste.fundo)
+    expect(contraste.cor).not.toMatch(/255,s*255,s*255/)
+
     await page.click('.at-equipe-item:has-text("João Lima")')
     await page.waitForSelector('.at-thread-meta:has-text("João Lima")', { timeout: 30_000 })
     await page.close()
