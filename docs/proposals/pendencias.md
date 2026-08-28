@@ -1,12 +1,14 @@
 # Proposta técnica — Módulo Pendências
 
-> **Status: proposta. Nada implementado.** Nenhuma migration, SQL, endpoint,
-> componente ou teste foi escrito nesta rodada.
+> **Status: proposta aprovada com ajustes. Nada implementado.** Nenhuma
+> migration, SQL, endpoint, componente ou teste foi escrito.
+>
+> **Não há decisões abertas.** Todas as questões que a primeira versão deixou em
+> aberto (A1–A5) foram decididas e estão incorporadas ao texto.
 >
 > Escrita depois de ler o schema real — `patients`, `appointments`,
 > `conversations`, `clinic_members`, `profiles`, os helpers de RLS, os grants e
-> o padrão de RPC do Atendimento. As decisões abaixo citam o que existe hoje,
-> não uma convenção paralela.
+> o padrão de RPC do Atendimento.
 
 ---
 
@@ -15,7 +17,7 @@
 A recepção da clínica carrega, o dia inteiro, um conjunto de coisas que
 *precisam ser feitas depois*: retornar para alguém, tentar um encaixe quando
 abrir horário, cobrar um documento, acompanhar uma solicitação, lembrar de algo
-ligado a um agendamento.
+ligado a um agendamento, resolver uma questão operacional.
 
 Hoje essas coisas moram em memória, em conversa de WhatsApp deixada aberta de
 propósito, em papel, ou em "depois eu faço".
@@ -25,9 +27,7 @@ certa lembrar, no momento certo.** Quando ela falta, sai de férias ou
 simplesmente tem um dia cheio, a tarefa desaparece sem deixar rastro — e o
 paciente é quem descobre.
 
-Pendências existe para tirar isso da memória. Não para organizar trabalho em
-abstrato: para que uma ação combinada com um paciente sobreviva à pessoa que a
-combinou.
+Pendências existe para tirar isso da memória.
 
 ---
 
@@ -45,30 +45,65 @@ Três propriedades a definem:
 A terceira é a que justifica o módulo existir. Se a tarefa morresse junto com a
 conversa, bastaria um campo de anotação na conversa.
 
+**Uma pendência pode não ter contexto nenhum.** *"Confirmar com a Dra. Ana se
+ela atende no feriado"*, *"revisar os encaixes de amanhã"*, *"resolver a questão
+do bebedouro da recepção"* — são ações internas legítimas, nascem do fluxo real
+e não pertencem a um paciente, uma conversa ou um agendamento específico. Ver §3.
+
 ---
 
-## 3. O que não pertence
+## 3. O que não pertence — e o que passou a proteger essa fronteira
 
 Não é Trello, kanban, gerenciador de projetos, calendário paralelo, CRM,
 automação, fila de mensagens, prontuário nem financeiro.
 
+Continuam fora, explicitamente: projetos, quadros, prioridade, subtarefas,
+recorrência, categorias genéricas, colaboração de projeto, notificações
+(push/e-mail/WhatsApp/badge em tempo real), automações e a integração com a
+página Hoje.
+
+### A mudança de natureza da fronteira · leia isto
+
+A primeira versão desta proposta protegia o escopo com um **CHECK no banco**:
+toda pendência precisava de ao menos um contexto. Essa exigência **caiu**, por
+uma razão que aceito integralmente — forçar contexto empurraria a pendência
+geral da clínica para duas saídas piores: voltar para o papel (o problema
+original) ou inventar um paciente fictício (que polui a base de pacientes, e é
+pior ainda).
+
+Mas a consequência precisa ficar dita, porque é uma troca real:
+
+> **A fronteira deixou de ser estrutural e passou a ser de vocabulário.** Antes,
+> o banco recusava a tarefa genérica. Agora, o que impede a deriva é o módulo
+> **não ter as palavras** para gerenciamento de projeto: sem prioridade, sem
+> tipo, sem subtarefa, sem quadro, sem projeto, sem recorrência, e com uma tela
+> que é lista operacional e não board.
+
+Isso funciona — a ausência de afordância é uma barreira legítima e, em muitos
+casos, mais honesta que uma constraint que gera contorno. Mas ela é **mais
+frouxa**, e depende de o produto continuar dizendo não.
+
+**Sinais concretos de deriva, para vigiar durante o piloto:**
+
+- pendências sem contexto viram a **maioria** das pendências abertas;
+- aparecem pedidos de agrupamento, etiqueta, cor, ordem manual ou "quadro";
+- aparecem títulos que descrevem projeto e não ação (*"Reforma da sala 2"*);
+- a mesma pendência genérica é recriada toda semana — sintoma de que o pedido
+  real é recorrência, que está fora de escopo por decisão.
+
+Se dois desses aparecerem juntos, a conversa a ter não é "adicionar campo": é
+decidir se existe um segundo produto ali.
+
 Três exclusões merecem o porquê, porque são as que a pressão de uso vai tentar
 furar:
 
-- **Não é lista genérica de tarefas da clínica.** "Comprar papel toalha" não é
-  pendência. A partir do momento em que for, a tela deixa de responder "o que
-  falta fazer pelos pacientes" e passa a responder "o que falta fazer", que é
-  uma pergunta sem dono. Ver decisão **D1**.
 - **Não modifica as entidades que referencia.** Concluir uma pendência não
   confirma um agendamento nem encerra uma conversa. O módulo observa; não
   comanda.
 - **Não é canal de comunicação.** Pendência não manda mensagem. Se a ação é
   "mandar mensagem", quem manda é o Atendimento, e a pendência é o lembrete de
   fazê-lo.
-
-Fora da v0.1, explicitamente: recorrência, RRULE, templates, notificações
-(push/e-mail/WhatsApp/badge em tempo real), automações, e a integração com a
-página Hoje.
+- **Não é prontuário.** Ver §14, sobre `description`.
 
 ---
 
@@ -81,15 +116,12 @@ Duas tabelas.
 | `tasks` | estado atual da pendência |
 | `task_events` | histórico append-only do que aconteceu com ela |
 
-A justificativa da segunda está em **§11**; ela não é simetria decorativa com o
-Atendimento.
-
 Nomenclatura: `tasks` em inglês, como todo o schema (`conversations`,
 `appointments`, `patients`). "Pendências" é o nome do produto, na UI.
 
 ---
 
-## 5. Campos
+## 5. Modelo final — campos
 
 ### `tasks`
 
@@ -101,10 +133,10 @@ Nomenclatura: `tasks` em inglês, como todo o schema (`conversations`,
 | `description` | text null | `<= 2000`, mesmo teto de `appointments.notes` |
 | `status` | `task_status` **not null** default `'open'` | ver §6 |
 | `assigned_to` | uuid null | FK composta → `clinic_members(clinic_id, user_id)` |
-| `due_at` | timestamptz null | ver **D4** |
-| `patient_id` | uuid null | FK composta → `patients(clinic_id, id)` |
-| `conversation_id` | uuid null | FK composta → `conversations(clinic_id, id)` |
-| `appointment_id` | uuid null | FK composta → `appointments(clinic_id, id)` — **exige migration aditiva, ver R1** |
+| `due_at` | timestamptz null | opcional; ver §6 |
+| `patient_id` | uuid null | **opcional**; FK composta → `patients(clinic_id, id)` |
+| `conversation_id` | uuid null | **opcional**; FK composta → `conversations(clinic_id, id)` |
+| `appointment_id` | uuid null | **opcional**; FK composta → `appointments(clinic_id, id)` — exige a migration de R1 |
 | `created_by` | uuid null | → `auth.users(id)` `on delete set null` |
 | `completed_by` | uuid null | idem |
 | `completed_at` | timestamptz null | carimbado pelo servidor |
@@ -117,9 +149,9 @@ Mais `constraint tasks_clinic_id_id_key unique (clinic_id, id)`, como em todas
 as outras tabelas do projeto — é o que permite que outra tabela aponte para
 `tasks` tenant-first no futuro.
 
-**Não existem** nesta lista, e é deliberado: `priority` (**D11**), `task_type`
-(**D12**), `deleted_at` (**D10**), `overdue` (**D3**), `patient_name_snapshot`
-(**R2**).
+**Não existem** nesta lista, e é deliberado: `priority`, `task_type`,
+`deleted_at`, `overdue`, `patient_name_snapshot` (ver R2), e **nenhum CHECK
+exigindo contexto**.
 
 ### `task_events`
 
@@ -128,18 +160,18 @@ Mesma forma que `conversation_events`, que já provou funcionar:
 | Campo | Nota |
 |---|---|
 | `id`, `clinic_id`, `task_id` | FK composta → `tasks(clinic_id, id)` `on delete cascade` |
-| `event_type` | enum, ver §11 |
+| `event_type` | enum `task_event_type`, ver §11 |
 | `actor_user_id` | → `auth.users(id)` `on delete set null` |
 | `actor_name_snapshot` | text, `1..120` |
 | `actor_role_snapshot` | `clinic_role` |
 | `metadata` | jsonb `not null default '{}'`, objeto, `<= 2048 bytes` |
 | `created_at` | timestamptz |
 
-O snapshot de nome fica **aqui**, não na `tasks` — ver **D16**.
+O snapshot de nome fica **aqui**, não na `tasks` — ver §11.
 
 ---
 
-## 6. Estados — três
+## 6. Estados e prazo
 
 ```
 open ──► completed
@@ -149,47 +181,64 @@ open ──► completed
        ◄──┘     (reabrir)
 ```
 
-`open`, `completed`, `cancelled`. Nada mais.
+`open`, `completed`, `cancelled`. Nada mais. Sem `new`, `in_progress`,
+`waiting`, `overdue`, `today` ou `upcoming`.
 
-**Concordo com a direção.** `new`, `in_progress`, `waiting`, `overdue`, `today`
-e `upcoming` não são estados da pendência — são recortes de uma lista:
+`due_at` é **opcional**. Obrigar produziria prazo falso, e prazo falso destrói o
+sinal de "Atrasadas", que é o mais valioso da tela.
+
+### Visões derivadas — nunca colunas
 
 | Recorte | Derivação |
 |---|---|
-| Atrasadas | `status = 'open' and due_at < now()` |
-| Hoje | `status = 'open'` e `due_at` dentro do dia **no fuso da clínica** |
-| Próximas | `status = 'open' and due_at > fim do dia de hoje` |
+| Atrasadas | `status = 'open' and due_at < agora` |
+| Hoje | `status = 'open'` e `due_at` dentro do dia local da clínica |
+| Próximas | `status = 'open' and due_at >` fim do dia local |
 | Sem prazo | `status = 'open' and due_at is null` |
 | Minhas | `status = 'open' and assigned_to = auth.uid()` |
 | Sem responsável | `status = 'open' and assigned_to is null` |
 | Concluídas | `status = 'completed'` |
 
+**Todos os cortes de dia usam `clinics.timezone`**, nunca o relógio do servidor
+nem o do navegador. Ver R3 e R4.
+
+> **Propriedade que vale registrar: nenhuma pendência aberta pode ficar
+> invisível.** *Atrasadas*, *Hoje*, *Próximas* e *Sem prazo* formam uma partição
+> completa de `status = 'open'` — toda tarefa aberta tem `due_at` nulo (Sem
+> prazo) ou não nulo, e nesse caso cai em exatamente uma das outras três. Isso
+> não é coincidência de UI: é a garantia de que o módulo cumpre o que promete,
+> que é nada sumir.
+
 `in_progress` merece um parágrafo, porque é o que mais se pede: ele parece
 informação e quase nunca é. Quem "começou" uma ligação que não completou não
-mudou o mundo; a pendência continua pendente. O estado só passaria a valer se
-existisse alguém esperando por ele — e não existe na v0.1.
+mudou o mundo; a pendência continua pendente.
 
 ---
 
-## 7. Invariantes
+## 7. Invariantes finais
 
 1. **`clinic_id` é imutável.** Trigger, como em `patients` (migration 0005).
-   Uma pendência não muda de clínica.
-2. **Pelo menos um contexto** — `patient_id`, `conversation_id` ou
-   `appointment_id` não nulo. Ver **D1**.
-3. **`created_by` vem de `auth.uid()`**, nunca do cliente. Carimbado por
-   trigger/RPC no servidor.
-4. **`completed_at`/`completed_by` existem se e somente se `status =
-   'completed'`.** Mesma regra para `cancelled_*`. Um CHECK garante os dois
-   sentidos — é o que impede uma tarefa reaberta de continuar carregando a
-   marca de concluída.
-5. **`due_at` não tem restrição de futuro.** Ao contrário de
+2. **`created_by` vem de `auth.uid()`**, nunca do cliente. Idem `completed_by` e
+   `cancelled_by`. Timestamps do servidor.
+3. **`completed_at`/`completed_by` existem se e somente se `status =
+   'completed'`.** Mesma regra para `cancelled_*`. CHECK nos dois sentidos — é o
+   que impede uma tarefa reaberta de continuar carregando a marca de concluída.
+4. **`due_at` não tem restrição de futuro.** Ao contrário de
    `messages.occurred_at`, que rejeita futuro porque descreve um fato passado,
-   `due_at` descreve uma intenção — e criar hoje uma pendência com prazo de
-   ontem é legítimo (registrar algo que já deveria ter sido feito).
-6. **Coerência de contexto verificada só na criação**, nunca depois. Ver **D13**.
-7. **Todas as FKs de contexto são tenant-first e compostas.** Cross-tenant
-   continua estruturalmente impossível, e não por confiança na aplicação.
+   `due_at` descreve intenção — criar hoje uma pendência com prazo de ontem é
+   legítimo.
+5. **Coerência de contexto verificada só na criação**, nunca depois. Ver §8.
+6. **Toda FK de contexto é tenant-first e composta.** Cross-tenant é
+   estruturalmente impossível, e não por confiança na aplicação.
+7. **`tasks` não aceita `UPDATE` nem `DELETE` de `authenticated`** — nem por
+   policy, nem por grant. Toda mudança passa por RPC controlada.
+8. **`task_events` é append-only e o cliente nunca insere nele** — sem policy de
+   INSERT, sem grant de INSERT. Só as RPCs `security definer` escrevem.
+9. **Transições válidas**: `open→completed`, `open→cancelled`,
+   `completed→open`, `cancelled→open`. As diretas entre terminais são recusadas.
+
+**Deixou de existir** o invariante da versão anterior que exigia ao menos um
+contexto.
 
 ---
 
@@ -200,19 +249,20 @@ existisse alguém esperando por ele — e não existe na v0.1.
 `(clinic_id, patient_id) → patients(clinic_id, id)`, e não
 `patient_id → patients(id)`. A verificação de FK **ignora RLS**: uma FK simples
 aceitaria alegremente o `patient_id` de outra clínica. A chave composta torna a
-mistura impossível no nível do catálogo. É o padrão já aplicado em
-`appointments` e `conversations`.
+mistura impossível no nível do catálogo. Padrão já aplicado em `appointments` e
+`conversations`. **FK simples por `appointment_id` está recusada.**
 
 ### `ON DELETE` de cada uma — lido do schema, não presumido
 
 | FK | Regra | Por quê |
 |---|---|---|
 | `clinic_id → clinics(id)` | `cascade` | raiz do tenant |
-| `(clinic_id, assigned_to) → clinic_members(clinic_id, user_id)` | `set null (assigned_to)` | tirar alguém da clínica **não pode** travar a remoção nem apagar a tarefa; ela volta para a fila geral |
-| `(clinic_id, patient_id) → patients(clinic_id, id)` | `set null (patient_id)` | `patients` **tem** DELETE real (policy `patients_delete_admin`); ver **R2** |
-| `(clinic_id, conversation_id) → conversations(clinic_id, id)` | `set null (conversation_id)` | preserva o princípio "a tarefa sobrevive ao contexto" |
+| `(clinic_id, assigned_to) → clinic_members(clinic_id, user_id)` | `set null (assigned_to)` | tirar alguém da clínica não pode travar a remoção nem apagar a tarefa; ela volta para a fila geral |
+| `(clinic_id, patient_id) → patients(clinic_id, id)` | `set null (patient_id)` | `patients` **tem** DELETE real (policy `patients_delete_admin`); ver R2 |
+| `(clinic_id, conversation_id) → conversations(clinic_id, id)` | `set null (conversation_id)` | preserva "a tarefa sobrevive ao contexto" |
 | `(clinic_id, appointment_id) → appointments(clinic_id, id)` | `set null (appointment_id)` | idem |
 | `created_by`, `completed_by`, `cancelled_by → auth.users(id)` | `set null` | mesmo tratamento de `appointments.created_by` |
+| `(clinic_id, task_id) → tasks(clinic_id, id)` *(em `task_events`)* | `cascade` | evento não existe sem a tarefa |
 
 > **A armadilha do `SET NULL` composto vale aqui igual.** `on delete set null`
 > **sem lista de colunas anula todas as colunas da FK**, inclusive `clinic_id`,
@@ -227,26 +277,41 @@ policy nem grant de DELETE** — não há hard delete pela API. `patients`
 `patient_id` e o de `assigned_to`. Os outros dois são defesa contra um futuro em
 que exclusão passe a existir, e custam nada.
 
-### `patient_id` + `conversation_id`: por que os dois
+### `patient_id` + `conversation_id`: por que os dois, e o que significam
 
-A pergunta do briefing era se guardar `patient_id` quando a conversa já o tem
-não seria duplicação. **Não é**, e a distinção importa:
+Não é duplicação. São afirmações diferentes:
 
-- `conversation.patient_id` responde *"com quem estamos falando"*.
-- `task.patient_id` responde *"sobre quem é esta ação"*.
+- `conversation.patient_id` — *"com quem estamos falando"*, o vínculo **atual**
+  da conversa.
+- `task.patient_id` — *"sobre quem é esta ação"*, fixado no momento da criação.
 
-Coincidem quase sempre, mas são afirmações diferentes, e o vínculo da conversa
-**muda depois** — o Atendimento suporta vincular, desvincular e trocar paciente
-com ação explícita (migration 0020). Se a tarefa resolvesse o paciente por join,
-desvincular a conversa amanhã apagaria retroativamente o sujeito de uma tarefa
-criada hoje. Isso é reescrever história.
+O vínculo da conversa **muda depois**: o Atendimento suporta vincular,
+desvincular e trocar paciente com ação explícita (migration 0020). Se a tarefa
+resolvesse o paciente por join, desvincular a conversa amanhã apagaria
+retroativamente o sujeito de uma tarefa criada hoje — isso é reescrever
+história.
 
-Ver **D13** para o tratamento de coerência.
+**Se a conversa for desvinculada no futuro, `task.patient_id` não muda.**
+
+### Regra de coerência — só na criação
+
+Quando a tarefa é criada com `conversation_id` **e** `patient_id`:
+
+| Estado da conversa naquele momento | Resultado |
+|---|---|
+| vinculada a um paciente **diferente** | **recusar** |
+| vinculada ao **mesmo** paciente | aceitar |
+| **sem** paciente vinculado | aceitar |
+
+Verificada **uma vez**, na criação ou na vinculação inicial. **Nunca
+reverificada.** Constraint contínua congelaria a conversa: seria impossível
+desvincular um paciente enquanto houvesse pendência aberta apontando para ele,
+o que transformaria uma decisão do Atendimento em refém do módulo de Pendências.
 
 ### `appointment_id`: por que aqui é diferente do Atendimento
 
-A decisão 12 do Atendimento recusou `conversations.appointment_id` — e a
-recusa **não se aplica aqui**, por um motivo de cardinalidade, não de gosto:
+A decisão 12 do Atendimento recusou `conversations.appointment_id` — e a recusa
+**não se aplica aqui**, por cardinalidade, não por gosto:
 
 > Uma conversa produz **vários** agendamentos ao longo do tempo (marcou,
 > remarcou, marcou o retorno). Uma coluna guardaria só o último.
@@ -272,49 +337,46 @@ aqui exatamente pela razão que a tornava errada lá.
                    └──── reabrir ─────────┘
 ```
 
-Transições permitidas: `open→completed`, `open→cancelled`,
-`completed→open`, `cancelled→open`. Proibidas: `completed→cancelled` e
-`cancelled→completed` diretas — quem errou reabre primeiro, e o caminho fica
-legível no histórico.
+Proibidas: `completed→cancelled` e `cancelled→completed` diretas — quem errou
+reabre primeiro, e o caminho fica legível no histórico.
 
-**Reabrir é permitido, e recomendado** (**D8**). Sem isso, um clique errado é
-permanente, e a resposta da equipe a um sistema que não perdoa é parar de usá-lo.
+**Reabrir é permitido, por qualquer membro da clínica.** Sem isso, um clique
+errado é permanente, e a resposta da equipe a um sistema que não perdoa é parar
+de usá-lo.
 
-Ao reabrir, `completed_at`/`completed_by` (ou `cancelled_*`) voltam a `NULL` — o
-invariante 4 exige. **A informação de que já esteve concluída não se perde**:
-fica no `task_events`. Esse é o argumento mais concreto a favor da tabela de
-eventos, e está detalhado em §11.
+Ao reabrir:
+
+- vindo de `completed`, limpa `completed_at` e `completed_by`;
+- vindo de `cancelled`, limpa `cancelled_at` e `cancelled_by`;
+- grava o evento `reopened`;
+- **a informação de que já esteve concluída/cancelada não se perde** — ela está
+  em `task_events`, junto com quem fez e quando.
 
 Concluir ou cancelar **não altera nada fora da tarefa**: nem status do
 agendamento, nem status da conversa. E o contrário também: cancelar um
 agendamento **não** cancela a pendência ligada a ele — ela continua aberta, e a
-UI mostra que o agendamento relacionado foi cancelado. Concordo integralmente
-com a direção do briefing aqui: acoplar os dois transformaria uma decisão de
-agenda numa decisão sobre trabalho humano que ninguém tomou.
+UI mostra que o agendamento relacionado foi cancelado.
 
 ---
 
 ## 10. Concorrência
 
 **Mesmo padrão já aprovado em `conversations`** — `version` +
-`expected_version` + RPC atômica + 409 na API.
+`expected_version` + RPC atômica + 409 na API. Nada de last-write-wins
+silencioso.
 
-O cenário do briefing é real: Maria conclui enquanto João muda o prazo. Sem
-proteção, o último UPDATE vence em silêncio e uma das duas ações desaparece sem
-que ninguém saiba.
-
-O contrato, idêntico ao do Atendimento:
+O cenário é real: Maria conclui enquanto João muda o prazo. Sem proteção, o
+último UPDATE vence em silêncio e uma das duas ações desaparece sem que ninguém
+saiba.
 
 - A API **nunca** faz `SELECT version` seguido de `UPDATE`. `expected_version` é
   obrigatório e vem do cliente, que o recebeu na leitura.
-- Toda mudança de estado passa por RPC `security definer` com
-  `set search_path = ''`.
+- Toda mudança passa por RPC `security definer` com `set search_path = ''`.
 - Retorno uniforme `{outcome, task}` com `outcome ∈ {ok, conflict, not_found}`,
   traduzido pela API em `200 | 409 | 404`.
-- `tasks` **não recebe policy de UPDATE nem grant de UPDATE** para
-  `authenticated`. Duas camadas dizendo a mesma coisa, e — como registrado no
-  Atendimento — a ausência de policy é o que impede que um grant acidental
-  reabra o caminho.
+- `tasks` **não recebe policy nem grant de UPDATE** para `authenticated`. Duas
+  camadas dizendo a mesma coisa — e, como registrado no Atendimento, a ausência
+  de policy é o que impede que um grant acidental reabra o caminho.
 - `task_assign` usa a trava extra `and assigned_to is null`, como
   `conversation_assign`: duas pessoas nunca recebem sucesso no mesmo assign,
   ainda que a versão coincida por outro caminho.
@@ -324,66 +386,103 @@ O contrato, idêntico ao do Atendimento:
 
 ---
 
-## 11. Auditoria — recomendação: `task_events` desde a v0.1
+## 11. Auditoria — `task_events` na v0.1
 
-O briefing pede a comparação. Ela é real, e a resposta não é "consistência com o
-Atendimento".
-
-**Opção A — só campos.** `created_by`, `completed_by/at`, `cancelled_by/at`
-respondem as quatro perguntas mínimas. Custo quase zero.
-
-**Opção B — `task_events` append-only.** Uma tabela, seu RLS, seus grants, seu
-trigger de snapshot, seus índices.
-
-**Recomendo B**, por três razões em ordem de peso:
-
-1. **Reabrir exige.** Reabrir precisa limpar `completed_at`/`completed_by` (do
-   contrário o invariante 4 quebra e a linha passa a mentir). Sem eventos, o
-   fato de que a tarefa **já esteve concluída** simplesmente deixa de existir.
-   A opção A e a decisão de permitir reabrir são incompatíveis: escolher A é
-   escolher terminalidade, ou escolher que reabrir apague história.
-2. **Prazo e responsável são exatamente onde a discussão acontece.** As perguntas
-   que uma clínica de verdade faz não são "quem criou" — são *"quem mudou o
-   prazo disso?"* e *"por que isso saiu comigo?"*. Campos atuais não respondem
-   nenhuma das duas. É a razão de ser do módulo: coisas não desaparecerem em
-   silêncio.
-3. **O custo marginal é baixo porque o padrão já existe.** `conversation_events`
-   está escrito, testado e documentado — trigger de snapshot de ator, teto de
-   `metadata`, RLS, grants. Não é invenção; é repetição de algo que já passou por
-   revisão.
-
-Vocabulário de eventos proposto, deliberadamente curto:
+Append-only. Nove tipos:
 
 ```
-created · assigned · transferred · released · due_changed
-completed · cancelled · reopened
+created · details_changed · assigned · transferred · released
+due_changed · completed · reopened · cancelled
 ```
 
-Não incluo `title_changed`/`description_changed`: são edição de texto, não
-mudança de compromisso, e inflariam a tabela sem responder pergunta operacional.
+**O cliente nunca insere.** Seguindo exatamente o que `conversation_events` já
+faz — nenhuma policy de INSERT, e grant apenas de `SELECT` para `authenticated`
+—, os eventos são escritos só pelas RPCs `security definer`. Um evento forjado
+pelo navegador é impossível, não improvável.
 
-**Os campos atuais continuam existindo junto com os eventos.** Não é redundância:
-a lista precisa de "quem concluiu" sem join, e o histórico precisa de "o que
-aconteceu" sem varrer. Mesma divisão de `conversations`, que tem
+`actor_user_id`, `actor_name_snapshot` e `actor_role_snapshot` são carimbados
+por trigger a partir de `current_actor_snapshot()`, a função que o Atendimento
+já usa. **Actor e timestamp nunca vêm do cliente.**
+
+### Histórico e read model são responsabilidades diferentes
+
+| Pergunta | Fonte |
+|---|---|
+| "Quem é a responsável **agora**?" | `assigned_to` + `clinic_member_directory` |
+| "Quem concluiu, e quando?" | `completed_by`/`completed_at` na linha |
+| "Quem mudou o prazo, e para quê?" | `task_events` |
+| "Como se chamava quem fez isso, **na época**?" | `actor_name_snapshot` no evento |
+
+Os campos atuais continuam existindo **junto** com os eventos, e isso não é
+redundância: a lista precisa de "quem concluiu" sem join, e o histórico precisa
+de "o que aconteceu" sem varrer. Mesma divisão de `conversations`, que tem
 `last_message_at` **e** eventos.
+
+Se o nome de alguém mudar depois, a linha atual mostra o nome novo (via
+diretório) e o histórico mostra o nome de quando o fato aconteceu. É o correto
+para auditoria.
+
+### `metadata` recomendada por evento
+
+| Evento | `metadata` |
+|---|---|
+| `created` | `{contexto: {patient_id?, conversation_id?, appointment_id?}, due_at?, assigned_to?}` — só as chaves presentes |
+| `assigned` | `{to_user_id}` |
+| `transferred` | `{from_user_id, to_user_id}` |
+| `released` | `{from_user_id}` |
+| `due_changed` | `{from, to}` — dois timestamptz ou nulo |
+| `completed`, `cancelled` | `{}` — autor e instante já estão nas colunas do evento |
+| `reopened` | `{from_status}` — `completed` ou `cancelled` |
+| `details_changed` | **ver abaixo** |
+
+### `details_changed`: recomendação explícita
+
+> **Recomendo registrar apenas os NOMES dos campos alterados, sem valores.**
+>
+> ```
+> {"fields": ["title"]}
+> {"fields": ["title", "description"]}
+> ```
+
+Três razões, a primeira decisiva:
+
+1. **`old`/`new` completos não cabem.** `description` vai até 2000 caracteres, e
+   o teto de `metadata` é 2048 bytes — o mesmo já adotado em
+   `conversation_events`. Uma única edição de descrição longa **estouraria a
+   constraint** e a operação falharia, com uma mensagem que ninguém relacionaria
+   à causa. Guardar valores exigiria abrir mão do teto, e o teto existe para
+   impedir que a tabela de eventos vire depósito.
+2. **Duplicar `description` nos eventos multiplica a exposição do texto.**
+   `description` carrega instrução operacional que pode mencionar pessoas.
+   Copiá-la para uma segunda tabela, a cada edição, cria N cópias do mesmo
+   conteúdo sensível sem que ninguém tenha pedido histórico textual.
+3. **A pergunta operacional é "alguém mexeu nisto?"**, não "qual era a vírgula
+   anterior". Quem precisa do texto atual, lê a tarefa; quem precisa saber que
+   mudou, e quem mudou, tem o evento.
+
+**Assimetria rejeitada:** guardar `old`/`new` só para `title` (que cabe em 400
+bytes) e não para `description` produziria um histórico que às vezes tem valores
+e às vezes não — pior de entender do que um que nunca tem.
+
+Se algum dia o histórico textual virar requisito real, ele é aditivo: uma tabela
+própria, com retenção própria, sem sequestrar o campo `metadata`. **Não é
+sistema de versionamento de texto, e não deve virar um por acidente.**
 
 ---
 
 ## 12. RLS e multi-tenant
 
-Padrões já aprovados, sem exceção:
+| Item | `tasks` | `task_events` |
+|---|---|---|
+| `SELECT` | `is_clinic_member(clinic_id)` | `is_clinic_member(clinic_id)` |
+| `INSERT` | **sem policy** — só RPC | **sem policy** — só RPC |
+| `UPDATE` | **sem policy** | **sem policy** (append-only) |
+| `DELETE` | **sem policy** | **sem policy** |
 
-| Item | Regra |
-|---|---|
-| `SELECT` | `public.is_clinic_member(clinic_id)` em `tasks` e `task_events` |
-| `INSERT` | sem policy — criação só por RPC |
-| `UPDATE` | **sem policy** — ver §10 |
-| `DELETE` | **sem policy** — ver **D10** |
-| `anon` / `PUBLIC` | zero, em tabela e em função |
-| `clinic_id` | imutável por trigger |
-| `created_by` | de `auth.uid()`, nunca do cliente |
-| API normal | **sem `service_role`**, sem bypass de RLS |
-| Cross-tenant | 404 idêntico a inexistente, non-disclosure |
+Mais: `clinic_id` imutável por trigger; `created_by` de `auth.uid()`;
+`anon`/`PUBLIC` com zero em tabela e em função; API normal **sem
+`service_role`**, sem bypass de RLS; cross-tenant devolve **404 idêntico** ao de
+um UUID inexistente (non-disclosure — um 403 confirmaria existência).
 
 As funções auxiliares são as que já existem: `is_clinic_member`,
 `has_clinic_role`, `current_actor_snapshot`, `clinic_member_directory`. Nenhuma
@@ -400,8 +499,8 @@ Regra permanente do projeto, registrada em `architecture.md`: **nunca
 authenticated:  select em tasks, task_events. Nada mais.
                 execute nas RPCs de controle. Nada mais.
 anon, public:   nada, em nenhuma tabela e em nenhuma função.
-service_role:   select, insert, update, delete — sem truncate,
-                references ou trigger.
+service_role:   select, insert, update, delete
+                — sem truncate, references ou trigger.
 ```
 
 > **Armadilha conhecida, e que já mordeu duas vezes** (migrations 0006 e 0014):
@@ -410,7 +509,7 @@ service_role:   select, insert, update, delete — sem truncate,
 > de grants é obrigatória e o `verify:privileges` precisa rodar logo após o push.
 
 Revogações por privilégio nomeado, nunca `revoke all` — `revoke all` derrubaria
-também os quatro que devem ficar, e o resultado passaria a depender da ordem das
+também os que devem ficar, e o resultado passaria a depender da ordem das
 instruções.
 
 ---
@@ -424,47 +523,49 @@ olhar.
 ┌──────────────────────────────────────────────────────────────┐
 │  Pendências                              [ + Nova pendência ] │
 ├──────────────────────────────────────────────────────────────┤
-│  Atrasadas 3 │ Hoje 5 │ Próximas │ Minhas │ Sem responsável   │
-│  Sem prazo 2 │ Concluídas                                     │
+│  Atrasadas 3 │ Hoje 5 │ Próximas 8 │ Sem prazo 2              │
+│  Minhas 4    │ Sem responsável 6 │ Concluídas                 │
 ├──────────────────────────────────────────────────────────────┤
 │  ● Ligar sobre encaixe de quinta                              │
 │    Maria Silva · ontem 14:00 · Ana · Atendimento    [Concluir]│
 │  ○ Solicitar exame antes da consulta                          │
 │    João Souza · hoje 17:00 · sem responsável · Agenda         │
+│  ○ Confirmar com a Dra. Ana se atende no feriado              │
+│    Geral · sem prazo · Ana                          [Concluir]│
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Nenhuma visão é redundante**, e vale dizer por quê, porque à primeira vista
-"Atrasadas ⊂ Hoje" parece plausível:
+**Pendência sem contexto aparece marcada como `Geral`** — não como espaço vazio.
+Um campo em branco lê-se como dado faltando; um rótulo lê-se como decisão.
+
+**Nenhuma visão é redundante:**
 
 - **Atrasadas** e **Hoje** são disjuntas por construção (`due_at < agora` vs.
-  `due_at` no restante do dia). Separadas porque exigem reações diferentes:
-  atrasada é dívida, hoje é plano.
-- **Sem prazo** é a única que não aparece em nenhuma das outras. Se ela virasse
-  uma aba escondida, o módulo recriaria exatamente o problema que veio resolver
-  — tarefa que some. **Concordo com a direção do briefing: ela não pode ser
-  escondida**, e proponho que o contador apareça mesmo quando zero.
+  restante do dia). Separadas porque exigem reações diferentes: atrasada é
+  dívida, hoje é plano.
+- **Sem prazo** não aparece em nenhuma das outras. Se virasse aba escondida, o
+  módulo recriaria o problema que veio resolver. **O contador aparece mesmo
+  quando zero.**
 - **Minhas** e **Sem responsável** cortam por dono, não por tempo; cruzam-se com
   as outras e não substituem nenhuma.
 
 Contadores em todas as abas: sem número, a aba não informa nada antes do clique.
 
 **Ação rápida `Concluir` direto na linha** — é a operação mais frequente e não
-deve custar uma navegação. Ao clicar no item, drawer com descrição, contexto
+deve custar navegação. Ao clicar no item, drawer com descrição, contexto
 completo e histórico.
 
 Criação rápida com atrito mínimo: **título, prazo, responsável**. Quando criada
 de outro módulo (Atendimento, Paciente, Agendamento), o contexto vem
-pré-selecionado e não é digitado. O modelo suporta isso hoje; a integração não é
-v0.1.
+pré-selecionado e não é digitado. O modelo já suporta; a integração não é v0.1.
 
-### Sobre `description` (§28 do briefing)
+### Sobre `description`
 
 `description` guarda **instrução operacional** — "Ligar para o paciente sobre o
 horário" —, não conteúdo clínico. O banco não tem como entender semântica de
 texto, então isso é regra de produto: fica registrada aqui, no placeholder do
-campo e na documentação. O teto de 2000 caracteres ajuda a sinalizar a intenção,
-mas não a garante.
+campo e na documentação. O teto de 2000 caracteres sinaliza a intenção, mas não
+a garante. Reforça a decisão de §11: não copiar esse texto para os eventos.
 
 ---
 
@@ -477,6 +578,8 @@ last, created_at asc` — o mais urgente primeiro, sem prazo por último.
 fila por prazo       clinic_id + status='open'  → ordena por due_at
 atrasadas            clinic_id + status='open' + due_at < :agora
 hoje                 clinic_id + status='open' + due_at entre :inicio e :fim
+próximas             clinic_id + status='open' + due_at > :fim
+sem prazo            clinic_id + status='open' + due_at is null
 minhas               clinic_id + assigned_to=:uid + status='open'
 sem responsável      clinic_id + assigned_to is null + status='open'
 por paciente         clinic_id + patient_id
@@ -488,221 +591,135 @@ histórico            clinic_id + task_id, ordena por created_at
 > **"Hoje" depende do fuso da clínica, não do servidor.** `clinics.timezone`
 > existe (IANA, validado por trigger) e a API já tem o decorator
 > `@ActiveClinicTimezone()` em uso no módulo de agendamentos. O intervalo do dia
-> precisa ser calculado nesse fuso e enviado como dois `timestamptz` — a
-> consulta permanece um range simples e continua usando índice. Ver **R3**.
+> é calculado nesse fuso e enviado como dois `timestamptz` — a consulta continua
+> um range simples e continua usando índice.
 
-Paginação por keyset, como em `conversations`, com a terceira ramificação
-(`due_at is null`) tratada explicitamente — é a que costuma ser esquecida.
+Paginação por keyset, como em `conversations`, com a ramificação
+`due_at is null` tratada explicitamente — é a que costuma ser esquecida.
 
 ---
 
-## 16. Índices propostos
+## 16. Índices
 
-Cinco. Cada um existe por uma consulta da lista acima, e nenhum por precaução.
+Cinco em `tasks`, um em `task_events`. Cada um existe por uma consulta acima, e
+nenhum por precaução.
 
 | Índice | Serve |
 |---|---|
-| `(clinic_id, status, due_at asc nulls last, id)` | fila principal, atrasadas, hoje, próximas — todas são recortes do mesmo range |
-| `(clinic_id, assigned_to, status, due_at)` **where** `assigned_to is not null` | "Minhas". Parcial porque "sem responsável" não se beneficia dele |
-| `(clinic_id, patient_id)` **where** `patient_id is not null` | futura aba no contexto do paciente |
-| `(clinic_id, conversation_id)` **where** `conversation_id is not null` | pendências abertas de uma conversa |
+| `(clinic_id, status, due_at asc nulls last, id)` | fila principal, atrasadas, hoje, próximas, sem prazo — todas são recortes do mesmo range |
+| `(clinic_id, assigned_to, status, due_at)` **where** `assigned_to is not null` | "Minhas" |
+| `(clinic_id, patient_id)` **where** `patient_id is not null` | futura aba na ficha do paciente |
+| `(clinic_id, conversation_id)` **where** `conversation_id is not null` | pendências de uma conversa |
 | `(clinic_id, appointment_id)` **where** `appointment_id is not null` | pendências de um agendamento |
+| `(clinic_id, task_id, created_at)` em `task_events` | histórico |
 
-Mais `(clinic_id, task_id, created_at)` em `task_events`, para o histórico.
+Os três de contexto são **parciais** de propósito — e com contexto agora
+totalmente opcional isso pesa mais, não menos: a maioria das linhas terá nulo em
+pelo menos dois deles, e indexar nulos custaria espaço sem servir consulta
+nenhuma.
 
 **Não proponho** índice para "sem responsável" (`assigned_to is null`): o
 primeiro índice já filtra por `clinic_id + status`, e o volume dentro de uma
-clínica não justifica um índice parcial dedicado. Se a fila geral crescer a
-ponto de doer, ele é aditivo.
-
-Os três de contexto são **parciais** de propósito: a maioria das linhas terá
-nulo em pelo menos dois deles, e indexar nulos custaria espaço sem servir
-consulta nenhuma.
+clínica não justifica um parcial dedicado. Se a fila geral doer, ele é aditivo.
 
 ---
 
-## 17. Riscos encontrados lendo o schema atual
+## 17. Riscos
 
-### R1 — `appointments` não tem `unique (clinic_id, id)` · **bloqueante**
+### R1 — `appointments` não tem `unique (clinic_id, id)` · **resolvido no plano**
 
 Seis tabelas têm a chave composta — `patients`, `professionals`, `services`,
 `conversations`, `messages`, `conversation_events`. **`appointments` não tem.**
 
-Consequência direta: a FK tenant-first
-`(clinic_id, appointment_id) → appointments(clinic_id, id)` **não pode ser
-criada hoje**. O PostgreSQL exige um índice único sobre exatamente as colunas
-referenciadas.
+Consequência: a FK `(clinic_id, appointment_id) → appointments(clinic_id, id)`
+**não pode ser criada hoje** — o PostgreSQL exige índice único sobre exatamente
+as colunas referenciadas.
 
-Alternativas, e por que só uma serve:
+FK simples e validação por trigger foram **recusadas**: a primeira aceitaria
+agendamento de outra clínica (FK ignora RLS), e a segunda trocaria garantia de
+catálogo por disciplina de aplicação.
 
-- FK simples `appointment_id → appointments(id)` — **recusada**: a verificação
-  de FK ignora RLS, e isso aceitaria um agendamento de outra clínica.
-- Sem FK, validando por trigger — **recusada**: troca uma garantia do catálogo
-  por disciplina de aplicação.
-- **Adicionar `constraint appointments_clinic_id_id_key unique (clinic_id, id)`**
-  — aditivo, alinha `appointments` com as outras seis, não quebra nada e é
-  barato. **Recomendado**, como primeiro passo da migration.
+**Decidido:** adicionar `unique (clinic_id, id)` a `appointments`, como primeira
+migration. É **correção de uma inconsistência pré-existente do schema da
+Agenda** — não dívida criada por Pendências, que apenas foi o primeiro módulo a
+esbarrar nela. A migration é aditiva, isolada, e continua correta sozinha mesmo
+que Pendências seja revertido.
 
-Vale notar que isso não é dívida criada por Pendências: é uma inconsistência que
-já existe no schema e que este módulo apenas foi o primeiro a encontrar.
+### R2 — `patients` tem DELETE real · custo aceito
 
-### R2 — `patients` tem DELETE real
-
-A policy `patients_delete_admin` permite hard delete por admin, e o grant de
-DELETE para `authenticated` existe. Um paciente **com** agendamento está
-protegido (`appointments.patient_fk` é `on delete restrict`), mas um paciente
-**sem** agendamento pode ser apagado.
+A policy `patients_delete_admin` permite hard delete por admin, e o grant existe.
+Um paciente **com** agendamento está protegido (`appointments.patient_fk` é
+`on delete restrict`); um paciente **sem** agendamento pode ser apagado.
 
 Com `set null (patient_id)` a tarefa sobrevive e perde o sujeito: sobra "Ligar
 para confirmar" sem dizer para quem.
 
-- `restrict` resolveria, mas faria uma pendência cancelada de meses atrás
-  bloquear a exclusão de um cadastro — efeito colateral desproporcional.
-- Um `patient_name_snapshot` resolveria a legibilidade, ao custo de um campo que
-  na prática quase nunca seria lido.
+- `restrict` faria uma pendência cancelada de meses atrás bloquear a exclusão de
+  um cadastro — desproporcional.
+- `patient_name_snapshot` resolveria a legibilidade, ao custo de um campo que na
+  prática quase nunca seria lido.
 
-**Recomendo `set null (patient_id)` e aceitar a perda**, porque o caso é raro
+**Decidido: `set null (patient_id)`, com a perda aceita.** O caso é raro
 (paciente sem nenhum agendamento, apagado por admin, com pendência viva) e o
-evento `created` guarda o `patient_id` original em `metadata`, o que permite
-reconstruir o vínculo se algum dia importar. Fica registrado como custo aceito,
-não como descuido.
+evento `created` guarda o `patient_id` original em `metadata`, permitindo
+reconstruir o vínculo se um dia importar. Custo aceito, não descuido.
 
 ### R3 — "Hoje" e "Atrasada" dependem do fuso da clínica
 
-`now()` no banco é UTC. Uma pendência para "hoje às 18h" em São Paulo vira
-21h UTC; um corte de dia feito em UTC classificaria errado tudo que cai entre
-21h e meia-noite local — justamente o fim do expediente, onde as pendências se
+`now()` no banco é UTC. Uma pendência para "hoje às 18h" em São Paulo vira 21h
+UTC; um corte de dia em UTC classificaria errado tudo que cai entre 21h e
+meia-noite local — justamente o fim do expediente, onde as pendências se
 acumulam.
 
-A infraestrutura existe (`clinics.timezone`, `@ActiveClinicTimezone()`). O risco
-é esquecer de usá-la e descobrir pelo relato de uma recepcionista de que "a
-tarefa sumiu de Hoje". Deve virar teste explícito, com clínica em fuso diferente
-do servidor.
+A infraestrutura existe. O risco é esquecer de usá-la e descobrir pelo relato de
+uma recepcionista de que "a tarefa sumiu de Hoje". Vira suíte dedicada.
 
 ### R4 — `overdue` calculado no cliente diverge do servidor
 
 Se o frontend classificar "atrasada" com o relógio do navegador, um computador
-com hora errada mostra uma fila diferente da real. A classificação deve vir de
-consulta ao servidor, não de comparação em JavaScript.
+com hora errada mostra uma fila diferente da real. A classificação vem do
+servidor.
 
 ### R5 — `appointments` não tem `version`
 
-`conversations` tem controle otimista; `appointments` não. Pendências vai
-introduzir o segundo uso do padrão. Não é problema para este módulo — é uma
-assimetria do produto que vale registrar, porque um dia alguém vai perguntar por
-que a agenda não protege contra edição simultânea.
+`conversations` tem controle otimista; `appointments` não. Pendências será o
+segundo uso do padrão. Não é problema deste módulo — é uma assimetria do produto
+que vale registrar, porque um dia alguém vai perguntar por que a agenda não
+protege contra edição simultânea.
+
+### R6 — a fronteira do escopo ficou mais frouxa · **novo**
+
+Consequência direta de tornar o contexto opcional. Detalhado em §3, com os
+sinais de deriva a vigiar. Registrado como risco porque a proteção deixou de ser
+verificável pelo banco e passou a depender de disciplina de produto — e risco
+que depende de disciplina precisa estar escrito, ou some.
 
 ---
 
-## 18. Decisões abertas — precisam da sua escolha
+## 18. Decisões fechadas
 
-| # | Questão | Minha recomendação |
-|---|---|---|
-| **A1** | Contexto obrigatório: aplicar CHECK na v0.1? | **Sim**, ver D1 — mas leia a ressalva, é a decisão de maior risco de estar errada |
-| **A2** | `task_events` na v0.1, ou adiar para v0.2? | **v0.1**, ver §11. É a decisão mais cara da proposta |
-| **A3** | Reabrir: qualquer membro, ou só admin/autor? | **Qualquer membro** na v0.1; RBAC fino não se justifica ainda |
-| **A4** | Editar `title`/`description` depois de criada? | **Sim**, sem evento — é correção de texto, não mudança de compromisso |
-| **A5** | Adicionar `appointments_clinic_id_id_key`? | **Sim** — sem isso R1 bloqueia `appointment_id` |
-
----
-
-## 19. Recomendações explícitas
-
-### Onde concordo com a sua direção
-
-| Ref | Decisão | |
-|---|---|---|
-| **D2** | Três estados: `open`, `completed`, `cancelled` | ✅ concordo |
-| **D3** | `overdue` derivado, nunca armazenado | ✅ concordo |
-| **D4** | `due_at` opcional, com "Sem prazo" visível | ✅ concordo — obrigar produz prazo falso, e prazo falso destrói o sinal de "Atrasadas", que é o mais valioso da tela |
-| **D5** | `assigned_to` nullable, FK composta, SET NULL seletivo | ✅ concordo |
-| **D9** | `version` + `expected_version` + RPC + 409 | ✅ concordo |
-| **D10** | Sem DELETE — só concluir ou cancelar | ✅ concordo |
-| **D11** | Sem `priority` | ✅ concordo — prazo, atraso e responsável já ordenam, e escala de prioridade em equipe pequena converge para "tudo urgente" em semanas |
-| **D12** | Sem `task_type` | ✅ concordo — enum fechado cedo vira lista arbitrária, e nenhum comportamento do sistema dependeria dele hoje |
-| **D14** | Recorrência fora da v0.1 | ✅ concordo |
-| **D15** | Cancelar agendamento não apaga pendência | ✅ concordo |
-| **D17** | Notificações fora da v0.1 | ✅ concordo |
-
-### Onde acrescento ou divirjo
-
-- **D1 — contexto obrigatório: recomendo aplicar, com ressalva honesta.**
-
-  O argumento decisivo não é de domínio, é de reversibilidade: **relaxar um
-  CHECK depois é uma migration aditiva de uma linha, que não pode quebrar linha
-  nenhuma; apertar depois exige migrar dados existentes.** Começar restrito é a
-  escolha que preserva as duas saídas.
-
-  A ressalva é real, e não quero que ela apareça só quando incomodar: existem
-  pendências legítimas sem paciente. *"Confirmar com a Dra. Ana se ela atende no
-  feriado"* e *"revisar os encaixes de amanhã"* são operacionais, nascem do
-  fluxo, e não têm paciente, conversa ou agendamento único. Sob a regra
-  restrita, ou ficam de fora do sistema — e voltam para o papel, que é o
-  problema original —, ou alguém inventa um paciente falso para acomodá-las, o
-  que é pior porque polui a base de pacientes.
-
-  **Sinal concreto para reavaliar:** se durante o piloto aparecer pedido
-  recorrente de pendência sem contexto, ou se alguém criar paciente fictício, a
-  regra caiu — e relaxar custa uma migration.
-
-- **D13 — coerência de contexto: verificar só na criação.**
-
-  Guardar `patient_id` e `conversation_id` juntos não é duplicação (§8). Mas
-  passar um par incoerente é bug, e vale barrar. Proponho: **se ambos vierem
-  preenchidos na criação e a conversa já tiver paciente, exigir que sejam o
-  mesmo** — e **nunca reverificar depois**. Verificação contínua congelaria a
-  conversa, impedindo desvincular paciente enquanto houvesse pendência aberta.
-
-- **D16 — sem snapshot de nome em `tasks`; snapshot em `task_events`.**
-
-  A `tasks` guarda estado atual, e nome atual se resolve pelo
-  `clinic_member_directory`, que já existe e é seguro (não amplia a policy de
-  `profiles`). O histórico é que precisa sobreviver à saída da pessoa — e é
-  exatamente onde `conversation_events` já coloca o snapshot. Se o nome mudar
-  depois, o histórico mostra o nome de quando o fato aconteceu, que é o correto
-  para auditoria.
-
-- **D18 — permissões da v0.1: todos os membros, sem RBAC.**
-
-  Todo membro da clínica vê, cria, assume, transfere, conclui, cancela e
-  reabre. Justificativa: numa clínica pequena, pendência sem dono precisa poder
-  ser pega por quem estiver livre, e regra de visibilidade fina criaria tarefa
-  que ninguém vê.
-
-  Registro a evolução prevista: quando `professional` passar a ter tela própria,
-  provavelmente não deve ver pendências administrativas. Isso é um filtro por
-  papel sobre uma coluna que **ainda não existe** — e não vou criá-la agora
-  (seria `task_type` pela porta dos fundos, contra D12).
-
-### O que eu faria diferente da sua direção
-
-Nada de fundo. As duas únicas divergências são de grau, ambas já acima: a
-ressalva sobre **D1** (que recomendo aplicar mesmo assim, por reversibilidade) e
-a insistência em **`task_events` na v0.1** (§11) — que é a parte mais cara da
-proposta e a que mais merece o seu "não" se o piloto precisar andar antes.
-
----
-
-## Decisões fechadas nesta proposta
+Nenhuma questão em aberto.
 
 | # | Decisão |
 |---|---|
-| D1 | Pelo menos um contexto obrigatório, por CHECK — com gatilho explícito de reavaliação |
+| D1 | **Contexto totalmente opcional.** Sem CHECK. Tarefa sem contexto é "pendência geral da clínica" e é legítima |
 | D2 | Três estados: `open`, `completed`, `cancelled` |
 | D3 | `overdue` derivado, nunca coluna |
-| D4 | `due_at` opcional; "Sem prazo" é visão de primeira classe |
+| D4 | `due_at` opcional; "Sem prazo" é visão de primeira classe, com contador visível mesmo em zero |
 | D5 | `assigned_to` nullable, FK composta, `set null (assigned_to)` |
-| D6 | `created_by`/`completed_by`/`cancelled_by` de `auth.uid()`, timestamps do servidor |
-| D7 | `task_events` append-only desde a v0.1 |
-| D8 | Reabrir permitido, dos dois estados terminais, com evento `reopened` |
+| D6 | `created_by`/`completed_by`/`cancelled_by` de `auth.uid()`; timestamps do servidor; actor do evento de fonte confiável |
+| D7 | `task_events` append-only na v0.1, nove tipos, cliente nunca insere |
+| D8 | Reabrir permitido dos dois terminais, por qualquer membro, com evento `reopened` |
 | D9 | `version` + `expected_version` + RPC atômica + 409 |
-| D10 | Sem DELETE, em nenhuma camada |
+| D10 | Sem DELETE, em nenhuma camada. Criada errada → cancelar |
 | D11 | Sem `priority` |
 | D12 | Sem `task_type` |
-| D13 | Contexto coerente verificado só na criação, nunca depois |
-| D14 | Sem recorrência, templates ou automação |
+| D13 | Coerência de contexto só na criação; conversa com paciente **diferente** recusa; sem paciente ou mesmo paciente aceita; nunca reverificada |
+| D14 | Sem recorrência, subtarefa, projeto, quadro, categoria ou template |
 | D15 | Pendência não modifica agendamento nem conversa, e vice-versa |
-| D16 | Snapshot de nome só em `task_events`; `tasks` resolve pelo diretório |
+| D16 | Snapshot de nome só em `task_events`; estado atual pelo `clinic_member_directory` |
 | D17 | Sem notificações |
 | D18 | Todos os membros da clínica, sem RBAC na v0.1 |
-| D19 | `appointments` ganha `unique (clinic_id, id)` — pré-requisito de R1 |
+| D19 | `appointments` ganha `unique (clinic_id, id)` — correção de inconsistência pré-existente |
+| D20 | `title` e `description` editáveis por RPC com `expected_version`, gerando `details_changed` |
+| D21 | `details_changed.metadata` guarda **só os nomes dos campos alterados**, nunca old/new |
