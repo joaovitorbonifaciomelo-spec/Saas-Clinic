@@ -1040,3 +1040,27 @@ https://srv1779541.taild2349f.ts.net
 
 Se o Fly falhar depois da troca, reverte-se **somente a variável de ambiente da
 Vercel** para esse valor. Nada na VPS é modificado.
+
+### Dimensionamento e custo (aprovado)
+
+Uma Machine `shared-cpu-1x` / 512 MB em `gru`, sempre ligada, sem volume.
+Máquina sempre de pé sai do free tier — custa alguns dólares por mês, e isso
+foi aprovado explicitamente em troca de duas coisas: margem de memória (Node em
+256 MB fica no limite, e o primeiro sintoma de falta seria OOM em produção, não
+lentidão) e ausência de cold start (numa recepção de clínica, cold start se lê
+como "o sistema travou").
+
+Qualquer cobrança além dessa configuração é motivo para parar e reportar, não
+para ajustar por conta própria.
+
+### Como o token do Fly chega até aqui
+
+O shell das ferramentas é não-login e não-interativo, com `BASH_ENV` vazio e sem
+`~/.bashrc`: ele **não lê perfil nenhum**, apenas herda o ambiente do processo
+que o criou. Consequência prática: `setx FLY_API_TOKEN ...` ou uma variável
+definida em outra janela não chegam a uma sessão já em andamento.
+
+O caminho limpo é `flyctl auth login` no terminal do operador: o flyctl grava a
+credencial no próprio `~/.fly/config.yml`, fora do repositório, e as invocações
+seguintes a leem sozinhas. Sem variável de ambiente, sem token em arquivo
+versionado, sem token impresso em log.
