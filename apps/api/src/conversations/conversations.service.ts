@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common'
 import {
   CONVERSATION_CONFLICT_ERROR,
+  CONVERSATION_PATIENT_ALREADY_LINKED,
+  CONVERSATION_PATIENT_ALREADY_LINKED_MESSAGE,
   CONVERSATION_EVENT_METADATA_KEYS,
   needsReply,
   toE164BR,
@@ -17,6 +19,7 @@ import {
   type RegisterManualMessageInput,
   type RegisterManualMessageResult,
   type ConversationConflictResponse,
+  type ConversationPatientAlreadyLinkedResponse,
   type ConversationDetail,
   type ConversationEventMetadata,
   type ConversationEventType,
@@ -746,6 +749,20 @@ export class ConversationsService {
           message: 'Este atendimento foi alterado por outra pessoa.',
           conversation: resultado.conversation!,
         } satisfies ConversationConflictResponse)
+      /*
+       * 409 tambem, mas com `error` proprio — e a distincao e o que importa.
+       *
+       * Conflito de versao pede "recarregue e tente de novo". Este pede uma
+       * acao: desvincular antes. Compartilhar o mesmo codigo obrigaria a tela a
+       * oferecer a saida errada para um dos dois casos.
+       */
+      case 'already_linked':
+        throw new ConflictException({
+          statusCode: 409,
+          error: CONVERSATION_PATIENT_ALREADY_LINKED,
+          message: CONVERSATION_PATIENT_ALREADY_LINKED_MESSAGE,
+          conversation: resultado.conversation!,
+        } satisfies ConversationPatientAlreadyLinkedResponse)
       /*
        * Inexistente, de outro tenant, ou vinculo perdido durante a corrida. O
        * ultimo caso importa: `conversation_conflict` revalida o membership

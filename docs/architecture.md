@@ -383,11 +383,7 @@ com o conteúdo**.
 - **Transição inválida** sobe do trigger como `INVALID_STATUS_TRANSITION`
   (errcode 22023) e vira **400**. A máquina de estados vive só no banco; o zod
   apenas recusa valores fora do enum.
-- **Vincular paciente sobre um vínculo existente SUBSTITUI**, guardado pela
-  versão, e emite `patient_linked` com o novo `patient_id` — **não** emite um
-  `patient_unlinked` do anterior. O histórico fica legível (dois
-  `patient_linked` com ids diferentes), mas quem for reconstruir a linha do
-  tempo precisa saber disso. É a semântica da RPC, não uma decisão da API.
+- **Vincular paciente NÃO substitui um vínculo existente** — ver §6.16.
 - **Destinatário ou paciente inválido** vira 400 com mensagem genérica —
   *"Responsavel invalido para esta clinica."* / *"Paciente invalido para esta
   clinica."* Não existe, é de outro tenant e não é elegível respondem igual:
@@ -404,6 +400,71 @@ Devolve `userId`, `displayName`, `role`. Serve para exibir o responsável atual 
 montar o seletor de transferência — **é leitura, não autorização**. Quem pode
 receber uma transferência continua sendo decidido pela FK composta dentro de
 `conversation_transfer`.
+
+---
+
+## 6.16 Vincular paciente: trocar exige duas ações (migration 0020)
+
+**Regra do domínio:** trocar o vínculo só acontece com ação explícita. Não há
+substituição silenciosa.
+
+| Estado atual | Pedido | Resultado |
+|---|---|---|
+| sem paciente | vincular X | **200** — vincula, `version +1`, evento `patient_linked` |
+| paciente X | vincular X | **200** — no-op: mesma conversa, **sem** `version +1`, **sem** evento |
+| paciente X | vincular Y | **409 `conversation_patient_already_linked`** — nada muda |
+
+Trocar de paciente é: `DELETE /patient` e depois `POST /patient`. Duas ações, dois
+eventos — `patient_unlinked` seguido de `patient_linked`.
+
+### Por que não substituir
+
+O vínculo diz **de quem é o atendimento**. Trocar por engano move a conversa
+inteira para o prontuário de outra pessoa, e o log não registra que alguém
+desfez o vínculo anterior — porque ninguém desfez. A auditoria fica tecnicamente
+completa e praticamente enganosa: dois `patient_linked` com ids diferentes só
+significam "trocou" para quem já sabe.
+
+**Não criamos `patient_changed` nem unlink implícito.** Seriam duas operações
+escondidas dentro de uma — exatamente o que a regra remove.
+
+### Dois 409 diferentes, de propósito
+
+| `error` | Significa | O que a tela deve oferecer |
+|---|---|---|
+| `conversation_conflict` | a versão ficou velha | recarregar e tentar de novo |
+| `conversation_patient_already_linked` | já há outro paciente | desvincular antes |
+
+Compartilhar o mesmo código obrigaria a UI a oferecer a saída errada para um dos
+dois casos.
+
+### Precedência: versão stale vence a regra de vínculo
+
+A ordem das verificações dentro da RPC é deliberada — versão **antes** do estado
+do vínculo:
+
+> A e B leem a versão 5, com o paciente X vinculado. A desvincula, e a conversa
+> vai para a versão 6 sem paciente. B tenta vincular Y com a versão 5.
+
+Se a regra de vínculo viesse primeiro, B receberia *"já vinculado"* — uma
+resposta sobre um estado que **não existe mais**, e a instrução de desvincular
+seria inútil (já está desvinculado). Verificando a versão antes, B recebe
+`conversation_conflict` com o estado atual e decide de novo, informado.
+
+Isso também impede que a regra nova reabra last-write-wins: o filtro
+`version = expected` continua **dentro do UPDATE**, e não só na checagem — entre
+o `select` e o `update` outra transação pode ter vencido a corrida.
+
+### O banco é a autoridade
+
+A regra vive na RPC `conversation_link_patient`, não na API nem num botão
+escondido. Chamada direta à função — fora do HTTP, por qualquer `authenticated` —
+recebe o mesmo `already_linked`. A API apenas traduz o outcome para 409.
+
+E a resposta **não diz nada sobre o paciente solicitado**: se existe, se é de
+outra clínica, se o id está errado. Isso seria informação sobre um cadastro que
+quem chamou pode não poder enxergar. A FK composta tenant-first segue barrando
+paciente de outro tenant, estruturalmente.
 
 ---
 

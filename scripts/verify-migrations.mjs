@@ -659,6 +659,155 @@ try {
     'MESSAGE_OCCURRED_AT_IN_FUTURE',
   )
 
+  // ------------------------- 6.55 vinculo de paciente nao substitui em silencio
+  console.log('')
+  console.log('  === 6.55 Vinculo de paciente ===')
+  console.log('')
+
+  /** Cria um paciente extra na clinica A, para haver dois candidatos. */
+  const novoPaciente = async (nome) => {
+    const { rows } = await db.query(
+      `insert into public.patients (clinic_id, name, phone) values ($1,$2,'11900000000')
+       returning id`,
+      [clinicA, nome],
+    )
+    return rows[0].id
+  }
+
+  await afirma('CASO A: conversa sem paciente vincula normalmente', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const r = await chamar(userA, 'conversation_link_patient', [c.id, c.version, pacienteA])
+    return r.outcome === 'ok' && r.conversation.patientId === pacienteA
+  })
+
+  await afirma('CASO B: mesmo paciente de novo e no-op bem sucedido', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const ligada = await chamar(userA, 'conversation_link_patient', [c.id, c.version, pacienteA])
+    const v = ligada.conversation.version
+
+    const repetida = await chamar(userA, 'conversation_link_patient', [c.id, v, pacienteA])
+    return repetida.outcome === 'ok' && repetida.conversation.patientId === pacienteA
+  })
+
+  await afirma('CASO B: no-op NAO incrementa versao e NAO cria evento', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const ligada = await chamar(userA, 'conversation_link_patient', [c.id, c.version, pacienteA])
+    const v = ligada.conversation.version
+
+    const antes = await db.query(
+      `select count(*)::int as n from public.conversation_events where conversation_id = $1`,
+      [c.id],
+    )
+    const repetida = await chamar(userA, 'conversation_link_patient', [c.id, v, pacienteA])
+    const depois = await db.query(
+      `select count(*)::int as n from public.conversation_events where conversation_id = $1`,
+      [c.id],
+    )
+    const { rows } = await db.query(`select version from public.conversations where id = $1`, [
+      c.id,
+    ])
+
+    return (
+      repetida.conversation.version === v &&
+      rows[0].version === v &&
+      depois.rows[0].n === antes.rows[0].n
+    )
+  })
+
+  await afirma('CASO C: paciente diferente e RECUSADO, sem substituir', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const outro = await novoPaciente('Outro Paciente')
+    const ligada = await chamar(userA, 'conversation_link_patient', [c.id, c.version, pacienteA])
+    const v = ligada.conversation.version
+
+    const tentativa = await chamar(userA, 'conversation_link_patient', [c.id, v, outro])
+
+    const { rows } = await db.query(
+      `select patient_id, version from public.conversations where id = $1`,
+      [c.id],
+    )
+    // O paciente antigo continua la, e a versao nao andou.
+    return (
+      tentativa.outcome === 'already_linked' &&
+      rows[0].patient_id === pacienteA &&
+      rows[0].version === v
+    )
+  })
+
+  await afirma('CASO C: a tentativa recusada NAO cria evento', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const outro = await novoPaciente('Terceiro Paciente')
+    const ligada = await chamar(userA, 'conversation_link_patient', [c.id, c.version, pacienteA])
+    const v = ligada.conversation.version
+
+    const antes = await db.query(
+      `select count(*)::int as n from public.conversation_events where conversation_id = $1`,
+      [c.id],
+    )
+    await chamar(userA, 'conversation_link_patient', [c.id, v, outro])
+    const depois = await db.query(
+      `select count(*)::int as n from public.conversation_events where conversation_id = $1`,
+      [c.id],
+    )
+    return depois.rows[0].n === antes.rows[0].n
+  })
+
+  await afirma('trocar exige desvincular antes, e o historico conta isso', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const outro = await novoPaciente('Paciente Novo')
+
+    const ligada = await chamar(userA, 'conversation_link_patient', [c.id, c.version, pacienteA])
+    const solta = await chamar(userA, 'conversation_unlink_patient', [
+      c.id,
+      ligada.conversation.version,
+    ])
+    const religada = await chamar(userA, 'conversation_link_patient', [
+      c.id,
+      solta.conversation.version,
+      outro,
+    ])
+
+    const { rows } = await db.query(
+      `select event_type from public.conversation_events
+        where conversation_id = $1 order by created_at`,
+      [c.id],
+    )
+    const tipos = rows.map((r) => r.event_type)
+
+    // Duas acoes explicitas, dois eventos. Nada escondido.
+    return (
+      religada.outcome === 'ok' &&
+      religada.conversation.patientId === outro &&
+      JSON.stringify(tipos) ===
+        JSON.stringify(['conversation_created', 'patient_linked', 'patient_unlinked', 'patient_linked'])
+    )
+  })
+
+  await afirma('versao stale tem PRECEDENCIA sobre a regra de vinculo', async () => {
+    const c = await novaConversa(userA, clinicA)
+    const outro = await novoPaciente('Paciente da corrida')
+
+    // Dois leem a versao 1. O primeiro vincula e a conversa vai para a 2.
+    const versaoLida = c.version
+    await chamar(userA, 'conversation_link_patient', [c.id, versaoLida, pacienteA])
+
+    // O segundo tenta com a versao velha. Precisa receber CONFLITO, e nao
+    // "ja vinculado": ele esta raciocinando sobre um estado que ja mudou.
+    const segundo = await chamar(userA, 'conversation_link_patient', [c.id, versaoLida, outro])
+    return segundo.outcome === 'conflict'
+  })
+
+  await afirma('paciente de OUTRA clinica continua sem disclosure', async () => {
+    const c = await novaConversa(userA, clinicA)
+    try {
+      await chamar(userA, 'conversation_link_patient', [c.id, c.version, pacienteB])
+      return false
+    } catch (e) {
+      // A FK composta barra estruturalmente; a regra nova nao criou atalho.
+      return (e.code ?? '') === '23503' || e.message.includes('23503')
+    }
+  })
+
   // ------------------------------------- 6.6 diretorio da equipe da clinica
   console.log('')
   console.log('  === 6.6 Diretorio da equipe ===')

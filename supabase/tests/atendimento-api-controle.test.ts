@@ -487,6 +487,131 @@ describe('operacoes de controle', () => {
     expect((await eventosDe(c.id)).filter((e) => e.event_type === 'status_changed')).toHaveLength(0)
   })
 
+  it('vincular paciente diferente e RECUSADO — troca exige acao explicita', async () => {
+    const c = await novaConversa('Sem substituicao silenciosa')
+    const { data: outro } = await maria.db
+      .from('patients')
+      .insert({ clinic_id: maria.clinicId, name: 'Paciente Alternativo', phone: '11944443333' })
+      .select('id')
+      .single()
+
+    const ligada = await comoMaria('POST', `/conversations/${c.id}/patient`, {
+      expectedVersion: c.version,
+      patientId: maria.patientId,
+    })
+    const versao = (ligada.json as Conversation).version
+
+    const tentativa = await comoMaria('POST', `/conversations/${c.id}/patient`, {
+      expectedVersion: versao,
+      patientId: outro!.id as string,
+    })
+
+    // 409, mas com codigo PROPRIO: conflito de versao pede "recarregue"; este
+    // pede uma acao do usuario — desvincular antes.
+    expect(tentativa.status).toBe(409)
+    const corpo = tentativa.json as { error: string; message: string; conversation: Conversation }
+    expect(corpo.error).toBe('conversation_patient_already_linked')
+    expect(corpo.message).toContain('Desvincule o paciente atual')
+    expect(corpo.conversation.patientId).toBe(maria.patientId)
+
+    // O paciente antigo permanece intacto e a versao nao andou.
+    const { data: final } = await admin
+      .from('conversations')
+      .select('patient_id, version')
+      .eq('id', c.id)
+      .single()
+    expect(final!.patient_id).toBe(maria.patientId)
+    expect(final!.version).toBe(versao)
+
+    // E a recusa nao deixou evento nenhum.
+    const vinculos = (await eventosDe(c.id)).filter((e) => e.event_type === 'patient_linked')
+    expect(vinculos).toHaveLength(1)
+
+    // Nada sobre o paciente solicitado sai na resposta.
+    expect(tentativa.body).not.toContain(outro!.id as string)
+    expect(tentativa.body).not.toContain('Paciente Alternativo')
+  })
+
+  it('vincular o MESMO paciente de novo e no-op bem sucedido', async () => {
+    const c = await novaConversa('No-op de vinculo')
+    const ligada = await comoMaria('POST', `/conversations/${c.id}/patient`, {
+      expectedVersion: c.version,
+      patientId: maria.patientId,
+    })
+    const versao = (ligada.json as Conversation).version
+    const eventosAntes = (await eventosDe(c.id)).length
+
+    const repetida = await comoMaria('POST', `/conversations/${c.id}/patient`, {
+      expectedVersion: versao,
+      patientId: maria.patientId,
+    })
+
+    // Repetir a mesma operacao nao e erro — e tambem nao e fato novo.
+    expect(repetida.status).toBe(200)
+    const atual = repetida.json as Conversation
+    expect(atual.patientId).toBe(maria.patientId)
+    expect(atual.version).toBe(versao)
+    expect((await eventosDe(c.id)).length).toBe(eventosAntes)
+  })
+
+  it('trocar de paciente: desvincular, depois vincular', async () => {
+    const c = await novaConversa('Troca explicita')
+    const { data: outro } = await maria.db
+      .from('patients')
+      .insert({ clinic_id: maria.clinicId, name: 'Paciente Correto', phone: '11933332222' })
+      .select('id')
+      .single()
+
+    const ligada = await comoMaria('POST', `/conversations/${c.id}/patient`, {
+      expectedVersion: c.version,
+      patientId: maria.patientId,
+    })
+    const solta = await comoMaria(
+      'DELETE',
+      `/conversations/${c.id}/patient?expectedVersion=${(ligada.json as Conversation).version}`,
+    )
+    const religada = await comoMaria('POST', `/conversations/${c.id}/patient`, {
+      expectedVersion: (solta.json as Conversation).version,
+      patientId: outro!.id as string,
+    })
+
+    expect(religada.status).toBe(200)
+    expect((religada.json as Conversation).patientId).toBe(outro!.id)
+
+    // O historico conta o que realmente aconteceu: duas acoes, dois eventos.
+    expect((await eventosDe(c.id)).map((e) => e.event_type)).toEqual([
+      'conversation_created',
+      'patient_linked',
+      'patient_unlinked',
+      'patient_linked',
+    ])
+  })
+
+  it('versao stale tem precedencia sobre a regra de vinculo', async () => {
+    const c = await novaConversa('Stale vence already_linked')
+    const { data: outro } = await maria.db
+      .from('patients')
+      .insert({ clinic_id: maria.clinicId, name: 'Paciente da corrida', phone: '11922221111' })
+      .select('id')
+      .single()
+
+    const versaoLida = c.version
+    await comoMaria('POST', `/conversations/${c.id}/patient`, {
+      expectedVersion: versaoLida,
+      patientId: maria.patientId,
+    })
+
+    // Joao ainda esta na versao antiga. Precisa receber CONFLITO de versao, e
+    // nao "ja vinculado": ele raciocina sobre um estado que ja mudou, e a
+    // resposta certa e o estado atual, nao uma instrucao para desvincular.
+    const stale = await comoJoao('POST', `/conversations/${c.id}/patient`, {
+      expectedVersion: versaoLida,
+      patientId: outro!.id as string,
+    })
+    expect(stale.status).toBe(409)
+    expect((stale.json as { error: string }).error).toBe('conversation_conflict')
+  })
+
   it('vincular e desvincular paciente geram os dois eventos', async () => {
     const c = await novaConversa('Vinculo')
 

@@ -689,6 +689,33 @@ export interface ClinicMemberSummary {
 
 export const CONVERSATION_CONFLICT_ERROR = 'conversation_conflict' as const
 
+export const CONVERSATION_PATIENT_ALREADY_LINKED = 'conversation_patient_already_linked' as const
+
+/**
+ * 409 de "ja existe outro paciente vinculado".
+ *
+ * E um 409 DIFERENTE do conflito de versao, e a distincao importa para a tela:
+ * conflito de versao pede "recarregue e tente de novo"; este pede uma acao do
+ * usuario — desvincular antes. Se os dois compartilhassem o mesmo `error`, a UI
+ * so poderia oferecer a saida errada para um dos casos.
+ *
+ * `conversation` e o estado ATUAL, que quem chamou ja podia ler. NAO ha nada
+ * aqui sobre o paciente SOLICITADO: dizer se ele existe, se e de outra clinica
+ * ou se o id esta errado seria informacao sobre um cadastro que o chamador pode
+ * nao poder enxergar.
+ */
+export interface ConversationPatientAlreadyLinkedResponse {
+  statusCode: 409
+  error: typeof CONVERSATION_PATIENT_ALREADY_LINKED
+  message: string
+  conversation: Conversation
+}
+
+/** Texto de UX, fixado aqui para a API e o frontend nao divergirem. */
+export const CONVERSATION_PATIENT_ALREADY_LINKED_MESSAGE =
+  'Este atendimento já está vinculado a outro paciente. ' +
+  'Desvincule o paciente atual antes de vincular outro.'
+
 /**
  * Corpo do 409 das operacoes de controle.
  *
