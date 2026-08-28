@@ -62,6 +62,23 @@ function comTiming(request: NextRequest, response: NextResponse, authMs: number)
  * A protecao dos dados em si e do RLS no Postgres.
  */
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
+  /*
+   * LIBERACAO TEMPORARIA DE DIAGNOSTICO — SAI JUNTO COM A ROTA.
+   *
+   * Comparacao por IGUALDADE EXATA, de proposito, e fora do PUBLIC_PATHS.
+   * PUBLIC_PATHS casa por prefixo (`startsWith(path + '/')`), entao um item la
+   * abriria tambem tudo abaixo do caminho. Aqui nao existe "abaixo": so este
+   * pathname, literal. `/api`, `/api/`, `/api/conversations` e ate
+   * `/api/diag-cf/x` continuam protegidos.
+   *
+   * A saida acontece ANTES de criar o cliente Supabase: a rota de diagnostico
+   * nao chega a tocar cookie, sessao ou auth — nao e "autenticacao dispensada",
+   * e autenticacao que nunca roda.
+   */
+  if (request.nextUrl.pathname === '/api/diag-cf') {
+    return NextResponse.next({ request })
+  }
+
   const env = getPublicEnv()
   let response = NextResponse.next({ request })
 
