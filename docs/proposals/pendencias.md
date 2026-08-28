@@ -723,3 +723,11 @@ Nenhuma questão em aberto.
 | D19 | `appointments` ganha `unique (clinic_id, id)` — correção de inconsistência pré-existente |
 | D20 | `title` e `description` editáveis por RPC com `expected_version`, gerando `details_changed` |
 | D21 | `details_changed.metadata` guarda **só os nomes dos campos alterados**, nunca old/new |
+| D22 | Tarefa terminal fica **congelada**: só `reopen` é aceito. As outras cinco devolvem `invalid_state` |
+| D23 | `invalid_state` é outcome próprio, com `reason` — distinto de `conflict` e de `not_found` |
+| D24 | Precedência fixa: existência/membership → `expected_version` → regra de domínio |
+| D25 | Contexto é **imutável**: não há RPC para trocá-lo. Errado se resolve cancelando e criando outra |
+| D26 | No-ops devolvem `ok` sem gastar versão nem gerar evento |
+| D27 | `created.metadata` guarda o responsável inicial quando houver; `dueAt` não |
+| D28 | `valor → nulo` no contexto só é aceito de ação referencial, distinguida por `pg_trigger_depth()` |
+| D29 | Índices finais: **2** em `tasks`, 1 em `task_events`. Os de contexto e o de Concluídas ficam para quando houver consulta |

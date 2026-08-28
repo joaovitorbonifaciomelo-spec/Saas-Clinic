@@ -79,17 +79,46 @@ create table if not exists public.task_events (
   -- outra: CHECK nao aceita subconsulta, entao nao da para contar chaves com
   -- jsonb_object_keys.
   --
-  -- created/completed/cancelled/reopened: metadata vazia.
+  -- completed/cancelled/reopened: metadata vazia.
   --   `reopened` nao carrega from_status porque o evento terminal anterior no
   --   log ja diz de onde veio; repetir criaria uma segunda fonte de verdade
   --   capaz de discordar da primeira.
-  --   `created` nao carrega os ids de contexto: eles sao imutaveis e vivem na
-  --   tarefa. A copia so teria efeito se o paciente fosse apagado — e guardar o
-  --   uuid de um paciente apagado nao devolve nome nenhum, apenas preserva o
-  --   vestigio de uma associacao que o administrador pediu para apagar.
   constraint task_events_empty_metadata check (
-    event_type not in ('created', 'completed', 'cancelled', 'reopened')
+    event_type not in ('completed', 'cancelled', 'reopened')
     or metadata = '{}'::jsonb
+  ),
+
+  /*
+   * `created` carrega UMA chave opcional: o responsavel inicial.
+   *
+   * Ela existe para tapar um buraco real de auditoria. Uma tarefa pode nascer
+   * ja atribuida. Se essa pessoa for removida da clinica antes de qualquer
+   * transferencia ou devolucao, o ON DELETE SET NULL zera `assigned_to` SEM
+   * gerar evento — e a informacao de quem era o responsavel inicial some por
+   * completo. Transferir e devolver guardam o `from`; a remocao de membership
+   * nao guarda nada.
+   *
+   * `dueAt` NAO entra, e a assimetria e proposital: prazo nao tem esse buraco.
+   * Se mudar, `due_changed` guarda o valor antigo; se nao mudar, ele continua
+   * na tarefa e nenhuma FK o anula. Guardar seria copia sem necessidade.
+   *
+   * Os ids de contexto tambem nao entram: sao imutaveis e vivem na tarefa, e a
+   * copia so teria efeito se o paciente fosse apagado — guardar o uuid de um
+   * paciente apagado nao devolve nome nenhum, apenas preserva o vestigio de
+   * uma associacao que o administrador pediu para apagar.
+   */
+  constraint task_events_created_metadata check (
+    event_type <> 'created'
+    or (
+      metadata - 'assignedTo' = '{}'::jsonb
+      and (
+        not (metadata ? 'assignedTo')
+        or (
+          (metadata -> 'assignedTo') ? 'userId'
+          and (metadata -> 'assignedTo') - 'userId' - 'displayName' = '{}'::jsonb
+        )
+      )
+    )
   ),
 
   -- details_changed: SOMENTE nomes de campo, nunca o texto.

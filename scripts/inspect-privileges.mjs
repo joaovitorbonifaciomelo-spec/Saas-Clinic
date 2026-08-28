@@ -27,6 +27,8 @@ const TABLES = [
   'conversations',
   'messages',
   'conversation_events',
+  'tasks',
+  'task_events',
 ]
 
 /** Matriz planejada: a mesma da migration 0003 (policies) e 0006 (grants). */
@@ -44,6 +46,9 @@ const EXPECTED = {
     conversations: ['SELECT'],
     messages: ['SELECT'],
     conversation_events: ['SELECT'],
+    // Pendencias: mesma disciplina. LE e nao ESCREVE.
+    tasks: ['SELECT'],
+    task_events: ['SELECT'],
   },
   anon: {
     profiles: [],
@@ -57,6 +62,8 @@ const EXPECTED = {
     conversations: [],
     messages: [],
     conversation_events: [],
+    tasks: [],
+    task_events: [],
   },
 }
 
@@ -104,9 +111,40 @@ const fail = (message) => {
   console.log(`    DIVERGENCIA: ${message}`)
 }
 
+/*
+ * Modulo escrito mas ainda nao aplicado: diz isso ANTES de reprovar.
+ *
+ * Sem este aviso, as dezenas de "tabela ausente" e "funcao ausente" que vem a
+ * seguir pareceriam violacao de privilegio — o pior tipo de alarme falso, o que
+ * ensina a equipe a ignorar o vermelho. A checagem continua reprovando (o
+ * inspector nao finge que passou); ela so explica o motivo primeiro.
+ */
+const pendentes = await client.query(
+  `select t.nome from unnest($1::text[]) as t(nome)
+    where to_regclass('public.' || t.nome) is null`,
+  [TABLES],
+)
+const AUSENTES = pendentes.rows.map((r) => r.nome)
+/*
+ * As consultas de privilegio usam has_table_privilege, que LANCA EXCECAO em
+ * tabela inexistente em vez de devolver falso. Sem filtrar, o inspector morre
+ * com um stack trace de Postgres e nao chega a reportar nada — inclusive sobre
+ * as tabelas que existem.
+ */
+const TABELAS_PRESENTES = TABLES.filter((t) => !AUSENTES.includes(t))
+if (AUSENTES.length > 0) {
+  console.log('\n  MODULO ESCRITO E AINDA NAO APLICADO')
+  console.log('  ' + '-'.repeat(64))
+  console.log(`    ausentes neste banco: ${AUSENTES.join(', ')}`)
+  console.log('    As divergencias abaixo sao consequencia disso, nao de grants errados.')
+  console.log('    Rode este inspector de novo IMEDIATAMENTE apos o db:push.')
+}
+
 // --- RLS ---------------------------------------------------------------------
 console.log('\n  ESTADO DO RLS')
 console.log('  ' + '-'.repeat(64))
+for (const t of AUSENTES) fail(`tabela ausente no banco: ${t}`)
+
 const rls = await client.query(
   `select c.relname as table, c.relrowsecurity as enabled, c.relforcerowsecurity as forced,
           (select count(*) from pg_policy p where p.polrelid = c.oid) as policies
@@ -178,7 +216,7 @@ const SERVICE_ROLE_MATRIZ = {
 
 console.log('\n  PRIVILEGIOS PROIBIDOS PARA authenticated')
 console.log('  ' + '-'.repeat(64))
-for (const table of TABLES) {
+for (const table of TABELAS_PRESENTES) {
   const held = await client.query(
     `select p as priv, has_table_privilege('authenticated', $1, p) as granted
        from unnest($2::text[]) as p`,
@@ -228,7 +266,7 @@ for (const row of schemaPrivs.rows) {
 for (const role of ['anon', 'authenticated', 'service_role']) {
   console.log(`\n  PRIVILEGIOS EFETIVOS - ${role}`)
   console.log('  ' + '-'.repeat(64))
-  for (const table of TABLES) {
+  for (const table of TABELAS_PRESENTES) {
     const actual = (byRole[role]?.[table] ?? []).sort()
     console.log(`    ${table.padEnd(16)} ${actual.length ? actual.join(', ') : '(nenhum)'}`)
 
@@ -289,7 +327,7 @@ const EXPECTED_POLICIES_BY_TABLE = {
 }
 
 console.log('')
-for (const table of TABLES) {
+for (const table of TABELAS_PRESENTES) {
   const actual = policies.rows.filter((row) => row.tablename === table).length
   const expected = EXPECTED_POLICIES_BY_TABLE[table]
   console.log(`    ${table.padEnd(26)} ${actual} policy(ies) (esperado ${expected})`)
@@ -304,7 +342,7 @@ console.log('  MATRIZ DE service_role (as 11 tabelas)')
 console.log('  ' + '-'.repeat(64))
 const privsMatriz = Object.keys(SERVICE_ROLE_MATRIZ)
 console.log('    ' + 'tabela'.padEnd(28) + privsMatriz.map((p) => p.slice(0, 4).padEnd(7)).join(''))
-for (const table of TABLES) {
+for (const table of TABELAS_PRESENTES) {
   const linha = []
   for (const priv of privsMatriz) {
     const { rows } = await client.query(
@@ -341,6 +379,16 @@ const EXPOSED_FUNCTIONS = [
   // Diretorio da equipe: leitura/UX. A autorizacao real continua na FK e nas
   // funcoes de controle; este so devolve nome para a tela.
   'clinic_member_directory',
+  // Pendencias: as nove operacoes controladas.
+  'task_create',
+  'task_update_details',
+  'task_assign',
+  'task_transfer',
+  'task_release',
+  'task_set_due',
+  'task_complete',
+  'task_cancel',
+  'task_reopen',
 ]
 const INTERNAL_FUNCTIONS = [
   'conversation_log_appointment',
@@ -351,6 +399,18 @@ const INTERNAL_FUNCTIONS = [
   // de fora. Expostos, so dariam superficie sem utilidade.
   'message_occurred_at_ok',
   'reject_future_occurred_at',
+  // Pendencias: devolvem ESTADO ou sao gatilhos. Expostas, seriam leitura
+  // lateral que ignora o contrato, ou superficie sem utilidade.
+  'task_row_json',
+  'task_noop',
+  'task_invalid_state',
+  'task_conflict',
+  'task_member_snapshot',
+  'stamp_task_event_actor',
+  'prevent_task_clinic_change',
+  'enforce_task_context_immutable',
+  'enforce_task_status_transition',
+  'bump_task_version',
 ]
 
 console.log('')

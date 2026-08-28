@@ -438,13 +438,51 @@ export type TaskCounts = Record<TaskView, number>
 /**
  * Resultado das operacoes controladas.
  *
- * `patient_mismatch` e um outcome PROPRIO, e nao um `conflict`. Sao erros
- * diferentes e a tela reage diferente: conflito pede recarregar, incoerencia
- * pede corrigir o paciente. Ambos viram 409 no HTTP, mas quem programa a tela
- * le este campo, nao o status.
+ * Quatro respostas de recusa porque exigem quatro reacoes diferentes na tela:
+ *
+ *   not_found        a pendencia nao e sua, ou nao existe. Saia dela.
+ *   conflict         voce viu um estado velho. Recarregue e decida de novo.
+ *   invalid_state    voce viu o estado certo; a acao e que nao cabe nele.
+ *   patient_mismatch a conversa ja aponta para outro paciente.
+ *
+ * Colapsar `invalid_state` em `conflict` faria a tela mandar recarregar quando
+ * recarregar nao resolve — a pessoa recarregaria, veria o mesmo, e tentaria de
+ * novo. Colapsar em `not_found` mandaria sair de uma pendencia que existe.
  */
-export const TASK_OUTCOMES = ['ok', 'conflict', 'not_found', 'patient_mismatch'] as const
+export const TASK_OUTCOMES = [
+  'ok',
+  'conflict',
+  'not_found',
+  'invalid_state',
+  'patient_mismatch',
+] as const
 export type TaskOutcome = (typeof TASK_OUTCOMES)[number]
+
+/**
+ * Por que a acao nao cabe no estado atual.
+ *
+ * Existe para a tela dizer a frase certa sem deduzir a partir de um codigo
+ * generico — "esta pendencia esta concluída; reabra para editar" e uma
+ * instrucao, "operacao invalida" e um beco sem saida.
+ */
+export const TASK_INVALID_REASONS = [
+  /** Concluida ou cancelada: so `reopen` e aceito. */
+  'terminal',
+  /** Assumir exige fila geral; para tirar de outro, transfira. */
+  'already_assigned',
+  /** Transferir exige responsavel atual; nao vira assumir implicito. */
+  'not_assigned',
+  /** Entre terminais nao ha atalho: reabra primeiro. */
+  'invalid_transition',
+] as const
+export type TaskInvalidReason = (typeof TASK_INVALID_REASONS)[number]
+
+export const TASK_INVALID_REASON_LABELS: Record<TaskInvalidReason, string> = {
+  terminal: 'Esta pendência já foi encerrada. Reabra para poder alterá-la.',
+  already_assigned: 'Esta pendência já tem responsável. Use transferir.',
+  not_assigned: 'Esta pendência está na fila geral. Use assumir.',
+  invalid_transition: 'Reabra a pendência antes de mudar para este estado.',
+}
 
 /**
  * `overdue` NAO vem calculado no cliente.

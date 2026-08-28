@@ -1597,6 +1597,297 @@ try {
     return r.outcome === 'not_found'
   })
 
+  // ===========================================================================
+  console.log('\n  === 13. Pendencias: terminal congelada e no-ops ===\n')
+
+  /** Cria e conclui, devolvendo a tarefa ja terminal. */
+  const tarefaConcluida = async (titulo) => {
+    const t = (await novaTask(userA, clinicA, { title: titulo })).task
+    const c = await chamarT(userA, 'task_complete', [t.id, t.version])
+    return c.task
+  }
+
+  await afirma('as cinco operacoes operacionais sao recusadas em terminal', async () => {
+    const t = await tarefaConcluida('Congelada')
+    const rs = [
+      await chamarT(userA, 'task_update_details', [t.id, t.version, 'Outro titulo', null, false]),
+      await chamarT(userA, 'task_assign', [t.id, t.version]),
+      await chamarT(userA, 'task_transfer', [t.id, t.version, userA2]),
+      await chamarT(userA, 'task_release', [t.id, t.version]),
+      await chamarT(userA, 'task_set_due', [t.id, t.version, '2027-01-01T10:00:00Z']),
+    ]
+    return rs.every((r) => r.outcome === 'invalid_state' && r.reason === 'terminal')
+  })
+
+  await afirma('invalid_state devolve a tarefa, para a tela mostrar o estado real', async () => {
+    const t = await tarefaConcluida('Congelada com corpo')
+    const r = await chamarT(userA, 'task_release', [t.id, t.version])
+    return r.task !== undefined && r.task.status === 'completed'
+  })
+
+  await afirma('reabrir e a UNICA operacao aceita em terminal', async () => {
+    const t = await tarefaConcluida('So reabrir')
+    const r = await chamarT(userA, 'task_reopen', [t.id, t.version])
+    return r.outcome === 'ok' && r.task.status === 'open'
+  })
+
+  await afirma('depois de reabrir, as demais voltam a ser permitidas', async () => {
+    const t = await tarefaConcluida('Volta ao normal')
+    const reaberta = (await chamarT(userA, 'task_reopen', [t.id, t.version])).task
+    const r = await chamarT(userA, 'task_assign', [reaberta.id, reaberta.version])
+    return r.outcome === 'ok' && r.task.assignedTo === userA
+  })
+
+  /*
+   * A precedencia importa: quem manda versao velha precisa saber disso ANTES de
+   * ser ensinado sobre o estado atual. Se a resposta fosse invalid_state, o
+   * cliente corrigiria a regra errada e tentaria de novo com a mesma versao.
+   */
+  await afirma('versao obsoleta em tarefa terminal responde conflict, nao invalid_state', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Precedencia' })).task
+    const versaoVelha = t.version
+    await chamarT(userA, 'task_set_due', [t.id, t.version, '2027-02-01T10:00:00Z'])
+    const atual = (await db.query('select version from public.tasks where id = $1', [t.id])).rows[0]
+    await chamarT(userA, 'task_complete', [t.id, atual.version])
+    const r = await chamarT(userA, 'task_update_details', [t.id, versaoVelha, 'Novo', null, false])
+    return r.outcome === 'conflict'
+  })
+
+  await afirma('assumir tarefa que ja tem dono: invalid_state, sem sobrescrever', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Ja tem dono' })).task
+    const a = await chamarT(userA, 'task_assign', [t.id, t.version])
+    const r = await chamarT(userA2, 'task_assign', [a.task.id, a.task.version])
+    const { rows } = await db.query('select assigned_to from public.tasks where id = $1', [t.id])
+    return (
+      r.outcome === 'invalid_state' &&
+      r.reason === 'already_assigned' &&
+      rows[0].assigned_to === userA
+    )
+  })
+
+  await afirma('transferir sem responsavel atual: invalid_state, nao assign implicito', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Sem dono' })).task
+    const r = await chamarT(userA, 'task_transfer', [t.id, t.version, userA2])
+    const { rows } = await db.query('select assigned_to from public.tasks where id = $1', [t.id])
+    return (
+      r.outcome === 'invalid_state' && r.reason === 'not_assigned' && rows[0].assigned_to === null
+    )
+  })
+
+  await afirma('transferir para o mesmo responsavel e no-op', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Mesmo dono' })).task
+    const a = await chamarT(userA, 'task_assign', [t.id, t.version])
+    const r = await chamarT(userA, 'task_transfer', [a.task.id, a.task.version, userA])
+    const ev = await db.query(
+      "select count(*)::int as n from public.task_events where task_id = $1 and event_type = 'transferred'",
+      [t.id],
+    )
+    return r.outcome === 'ok' && r.task.version === a.task.version && ev.rows[0].n === 0
+  })
+
+  await afirma('devolver tarefa que ja esta na fila e no-op', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Ja na fila' })).task
+    const r = await chamarT(userA, 'task_release', [t.id, t.version])
+    const ev = await db.query(
+      "select count(*)::int as n from public.task_events where task_id = $1 and event_type = 'released'",
+      [t.id],
+    )
+    return r.outcome === 'ok' && r.task.version === 1 && ev.rows[0].n === 0
+  })
+
+  await afirma('concluir tarefa ja concluida e no-op', async () => {
+    const t = await tarefaConcluida('Concluir duas vezes')
+    const r = await chamarT(userA, 'task_complete', [t.id, t.version])
+    const ev = await db.query(
+      "select count(*)::int as n from public.task_events where task_id = $1 and event_type = 'completed'",
+      [t.id],
+    )
+    return r.outcome === 'ok' && r.task.version === t.version && ev.rows[0].n === 1
+  })
+
+  await afirma('cancelar tarefa ja cancelada e no-op', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Cancelar duas vezes' })).task
+    const c = await chamarT(userA, 'task_cancel', [t.id, t.version])
+    const r = await chamarT(userA, 'task_cancel', [c.task.id, c.task.version])
+    const ev = await db.query(
+      "select count(*)::int as n from public.task_events where task_id = $1 and event_type = 'cancelled'",
+      [t.id],
+    )
+    return r.outcome === 'ok' && r.task.version === c.task.version && ev.rows[0].n === 1
+  })
+
+  await afirma('reabrir tarefa ja aberta e no-op', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Reabrir aberta' })).task
+    const r = await chamarT(userA, 'task_reopen', [t.id, t.version])
+    const ev = await db.query(
+      "select count(*)::int as n from public.task_events where task_id = $1 and event_type = 'reopened'",
+      [t.id],
+    )
+    return r.outcome === 'ok' && r.task.version === 1 && ev.rows[0].n === 0
+  })
+
+  await afirma('cancelada -> concluir e invalid_transition, nao no-op', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Sem atalho' })).task
+    const c = await chamarT(userA, 'task_cancel', [t.id, t.version])
+    const r = await chamarT(userA, 'task_complete', [c.task.id, c.task.version])
+    return r.outcome === 'invalid_state' && r.reason === 'invalid_transition'
+  })
+
+  // ===========================================================================
+  console.log('\n  === 14. Pendencias: atomicidade, contexto e privilegios ===\n')
+
+  await afirma('created guarda o responsavel inicial, sem inventar evento assigned', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Nasce com dono', assignee: userA2 })).task
+    const { rows } = await db.query(
+      'select event_type, metadata from public.task_events where task_id = $1 order by created_at, id',
+      [t.id],
+    )
+    return (
+      rows.length === 1 &&
+      rows[0].event_type === 'created' &&
+      rows[0].metadata.assignedTo.userId === userA2 &&
+      rows[0].metadata.assignedTo.displayName !== undefined
+    )
+  })
+
+  await afirma('created sem responsavel tem metadata vazia', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Nasce sem dono' })).task
+    const { rows } = await db.query(
+      "select metadata from public.task_events where task_id = $1 and event_type = 'created'",
+      [t.id],
+    )
+    return Object.keys(rows[0].metadata).length === 0
+  })
+
+  await afirma('UPDATE privilegiado NAO consegue zerar contexto fingindo ser FK', async () => {
+    const p = await inserirPaciente(userA, clinicA, 'Paciente Blindado')
+    const t = (await novaTask(userA, clinicA, { title: 'Contexto blindado', patientId: p })).task
+    let recusou = false
+    try {
+      // Como DONO DA TABELA, que passa por cima de RLS e de grants.
+      await db.query('update public.tasks set patient_id = null where id = $1', [t.id])
+    } catch (e) {
+      recusou = /CONTEXT_IMMUTABLE/.test(e.message)
+    }
+    const { rows } = await db.query('select patient_id from public.tasks where id = $1', [t.id])
+    return recusou && rows[0].patient_id === p
+  })
+
+  await afirma('se o evento falha, a tarefa NAO muda (mesma transacao)', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'ATOMICIDADE' })).task
+
+    // Trigger temporario que quebra a insercao do evento, e so dela.
+    await db.exec(`
+      create or replace function public.quebra_evento() returns trigger
+      language plpgsql as $fn$
+      begin
+        if new.event_type = 'completed' then
+          raise exception 'FALHA_PROPOSITAL no evento';
+        end if;
+        return new;
+      end;
+      $fn$;
+      create trigger tmp_quebra before insert on public.task_events
+        for each row execute function public.quebra_evento();
+    `)
+
+    let estourou = false
+    try {
+      await chamarT(userA, 'task_complete', [t.id, t.version])
+    } catch (e) {
+      estourou = /FALHA_PROPOSITAL/.test(e.message)
+    }
+
+    await db.exec(`
+      drop trigger if exists tmp_quebra on public.task_events;
+      drop function if exists public.quebra_evento();
+    `)
+
+    const { rows } = await db.query(
+      'select status, completed_at, version from public.tasks where id = $1',
+      [t.id],
+    )
+    // A tarefa continua aberta: o UPDATE foi desfeito junto com o evento.
+    return (
+      estourou &&
+      rows[0].status === 'open' &&
+      rows[0].completed_at === null &&
+      rows[0].version === 1
+    )
+  })
+
+  await afirma('nenhuma funcao interna e executavel por authenticated ou anon', async () => {
+    const internas = [
+      'public.task_row_json(public.tasks)',
+      'public.task_noop(public.tasks)',
+      'public.task_invalid_state(public.tasks, text)',
+      'public.task_conflict(uuid)',
+      'public.task_member_snapshot(uuid, uuid)',
+      'public.stamp_task_event_actor()',
+      'public.prevent_task_clinic_change()',
+      'public.enforce_task_context_immutable()',
+      'public.enforce_task_status_transition()',
+      'public.bump_task_version()',
+    ]
+    for (const f of internas) {
+      for (const papel of ['authenticated', 'anon']) {
+        const { rows } = await db.query(
+          'select has_function_privilege($1, $2, $3) as pode',
+          [papel, f, 'EXECUTE'],
+        )
+        if (rows[0].pode) {
+          falhou('funcao interna exposta', `${f} executavel por ${papel}`)
+          return false
+        }
+      }
+    }
+    return true
+  })
+
+  await afirma('as nove RPCs publicas sao executaveis por authenticated, e nao por anon', async () => {
+    const publicas = [
+      'public.task_create(uuid, text, text, timestamptz, uuid, uuid, uuid, uuid)',
+      'public.task_update_details(uuid, integer, text, text, boolean)',
+      'public.task_assign(uuid, integer)',
+      'public.task_transfer(uuid, integer, uuid)',
+      'public.task_release(uuid, integer)',
+      'public.task_set_due(uuid, integer, timestamptz)',
+      'public.task_complete(uuid, integer)',
+      'public.task_cancel(uuid, integer)',
+      'public.task_reopen(uuid, integer)',
+    ]
+    for (const f of publicas) {
+      const a = await db.query('select has_function_privilege($1,$2,$3) as pode', [
+        'authenticated', f, 'EXECUTE',
+      ])
+      const n = await db.query('select has_function_privilege($1,$2,$3) as pode', [
+        'anon', f, 'EXECUTE',
+      ])
+      if (!a.rows[0].pode || n.rows[0].pode) {
+        falhou('grant de RPC errado', f)
+        return false
+      }
+    }
+    return true
+  })
+
+  await afirma('service_role tem DML mas nao TRUNCATE/REFERENCES/TRIGGER', async () => {
+    const esperado = { SELECT: true, INSERT: true, UPDATE: true, DELETE: true, TRUNCATE: false, REFERENCES: false, TRIGGER: false }
+    for (const tabela of ['public.tasks', 'public.task_events']) {
+      for (const [priv, deve] of Object.entries(esperado)) {
+        const { rows } = await db.query(
+          'select has_table_privilege($1, $2, $3) as pode',
+          ['service_role', tabela, priv],
+        )
+        if (rows[0].pode !== deve) {
+          falhou('privilegio de service_role', `${tabela}.${priv} = ${rows[0].pode}`)
+          return false
+        }
+      }
+    }
+    return true
+  })
+
 } catch (e) {
   falhou('execucao', e.message)
 } finally {

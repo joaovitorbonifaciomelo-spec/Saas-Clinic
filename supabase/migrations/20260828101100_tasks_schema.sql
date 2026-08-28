@@ -133,11 +133,25 @@ create index if not exists tasks_clinic_status_due_idx
   on public.tasks (clinic_id, status, due_at asc nulls last, id);
 
 -- "Minhas". Parcial porque a fila geral (assigned_to is null) nao se beneficia
--- dele, e indexar esses nulos so custaria espaco. Mesmo desenho do indice de
--- conversas atribuidas.
+-- dele, e indexar esses nulos so custaria espaco.
+--
+-- `id` no fim NAO e enfeite: a paginacao por keyset ordena por
+-- (due_at, id) para ser deterministica quando dois prazos empatam. Sem `id` no
+-- indice, o cursor dependeria de uma coluna fora dele e o Postgres teria de
+-- ordenar o conjunto casado a cada pagina.
 create index if not exists tasks_clinic_assignee_idx
-  on public.tasks (clinic_id, assigned_to, status, due_at asc nulls last)
+  on public.tasks (clinic_id, assigned_to, status, due_at asc nulls last, id)
   where assigned_to is not null;
+
+-- NAO EXISTE indice para "Concluidas" ordenada por completed_at desc, e a
+-- ausencia e medida, nao esquecimento: o indice principal ja resolve o FILTRO
+-- pelo prefixo (clinic_id, status), e o que sobraria seria ordenar o conjunto
+-- casado. Nos volumes da v0.1 — uma clinica acumula dezenas a poucas centenas
+-- de pendencias concluidas — esse sort custa microssegundos e nao aparece ao
+-- lado dos ~200 ms de rede por requisicao.
+--
+-- O gatilho para criar: a aba Concluidas passar a ser navegada com frequencia
+-- E o EXPLAIN mostrar o sort dominando o tempo. Ai o indice e aditivo.
 
 -- NAO EXISTEM AQUI, e a ausencia e decisao: indices por patient_id,
 -- conversation_id e appointment_id. As consultas que os justificariam
@@ -185,20 +199,57 @@ set search_path = ''
 as $$
 begin
   /*
-   * "valor -> outro valor" e "nulo -> valor": nao.
-   * "valor -> nulo": SIM, e a excecao e obrigatoria.
+   * "valor -> outro valor" e "nulo -> valor": nunca.
+   * "valor -> nulo": SOMENTE quando vem de uma acao referencial de FK.
    *
-   * O caminho `valor -> nulo` e como o ON DELETE SET NULL das FKs de contexto
-   * chega ate aqui. Acoes referenciais no Postgres sao executadas por triggers
-   * internos que fazem UPDATE na tabela referenciante, e esse UPDATE dispara os
-   * triggers de usuario. Se a imutabilidade fosse cega, apagar um paciente
-   * falharia com CONTEXT_IMMUTABLE — e a regra de historico teria virado uma
-   * trava contra a exclusao de dados de paciente.
+   * POR QUE A EXCECAO E OBRIGATORIA
    *
-   * `nulo -> valor` fica barrado porque acrescentar contexto depois e tao
-   * reescrita de historico quanto troca-lo: a tarefa passaria a alegar que
-   * nasceu de algo que nao a originou.
+   * O ON DELETE SET NULL das FKs de contexto chega ate aqui como um UPDATE:
+   * acoes referenciais no Postgres sao executadas por triggers internos que
+   * atualizam a tabela referenciante, e esse UPDATE dispara os triggers de
+   * usuario. Se a imutabilidade fosse cega, apagar um paciente falharia com
+   * CONTEXT_IMMUTABLE — a regra de historico teria virado trava contra a
+   * exclusao de dado pessoal.
+   *
+   * POR QUE ELA NAO E UMA BRECHA GENERICA
+   *
+   * Permitir `valor -> nulo` para qualquer origem deixaria qualquer UPDATE
+   * privilegiado zerar contextos parecendo acao de FK. `pg_trigger_depth()`
+   * separa os dois casos: um UPDATE direto executa este trigger em
+   * profundidade 1; um UPDATE disparado pela acao referencial executa em
+   * profundidade 2, porque ja esta dentro do trigger interno de RI. Verificado
+   * empiricamente contra o Postgres, nao presumido.
+   *
+   * TRADEOFF, dito com clareza: a checagem prova "estou aninhado dentro de
+   * outro trigger", nao "sou exatamente uma acao de FK". Um trigger futuro que
+   * atualizasse tasks a partir de outra tabela herdaria a permissao. Isso e
+   * aceitavel porque nenhum existe, os dois unicos caminhos de escrita sao as
+   * RPCs (profundidade 1) e as FKs, e a alternativa — recusar tudo — quebraria
+   * a exclusao de pacientes.
+   *
+   * Vale lembrar que `authenticated` nao tem UPDATE em tasks, entao esta regra
+   * nao e a primeira linha de defesa: e a que protege contra service_role e
+   * contra o dono da tabela, que passam por cima do RLS.
    */
+  if old.patient_id is not null
+     and new.patient_id is null
+     and pg_trigger_depth() < 2 then
+    raise exception 'CONTEXT_IMMUTABLE: contexto so e anulado por acao referencial de FK.'
+      using errcode = '22023';
+  end if;
+  if old.conversation_id is not null
+     and new.conversation_id is null
+     and pg_trigger_depth() < 2 then
+    raise exception 'CONTEXT_IMMUTABLE: contexto so e anulado por acao referencial de FK.'
+      using errcode = '22023';
+  end if;
+  if old.appointment_id is not null
+     and new.appointment_id is null
+     and pg_trigger_depth() < 2 then
+    raise exception 'CONTEXT_IMMUTABLE: contexto so e anulado por acao referencial de FK.'
+      using errcode = '22023';
+  end if;
+
   if old.patient_id is not null
      and new.patient_id is not null
      and new.patient_id is distinct from old.patient_id then
