@@ -1,6 +1,6 @@
 'use client'
 
-import { useOptimistic, useState, useTransition } from 'react'
+import { useEffect, useOptimistic, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -38,6 +38,20 @@ export function Fila({
   const [extras, setExtras] = useState<ConversationListItem[]>([])
   const [cursor, setCursor] = useState(proximoCursor)
   const [carregando, setCarregando] = useState(false)
+  /*
+   * No celular a fila e a tela inteira, e o campo de busca custava uma faixa de
+   * altura que quase nunca era usada. Ele passa a abrir por um icone — no
+   * desktop continua sempre visivel, onde nao ha essa disputa por espaco.
+   *
+   * Comeca aberto quando ja ha busca ativa: esconder o termo que filtra a lista
+   * deixaria a pessoa sem entender por que ha tao poucos resultados.
+   */
+  const [buscaAberta, setBuscaAberta] = useState(busca !== '')
+  const campoBusca = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (buscaAberta) campoBusca.current?.focus()
+  }, [buscaAberta])
 
   /*
    * O realce muda na hora do clique; a conversa a direita continua a anterior
@@ -100,11 +114,35 @@ export function Fila({
 
   return (
     <aside className="card master at-fila">
-      <div className="master-head at-fila-head">
-        <h1 className="at-titulo">Atendimento</h1>
-        <form className="search inline" onSubmit={buscar} role="search">
+      <div className="master-head at-fila-head" data-busca={buscaAberta ? 'aberta' : 'fechada'}>
+        <div className="at-fila-topo">
+          <h1 className="at-titulo">Atendimento</h1>
+          {/* So aparece no celular; no desktop a busca ja esta na tela. */}
+          <button
+            type="button"
+            className="btn ghost sm at-busca-toggle"
+            aria-expanded={buscaAberta}
+            aria-label={buscaAberta ? 'Fechar busca' : 'Buscar atendimentos'}
+            onClick={() => {
+              if (buscaAberta && q !== '') {
+                // Fechar com termo digitado limparia o filtro sem avisar.
+                setQ('')
+                startTransition(() => {
+                  router.push(`/atendimento?${paramsCom({ q: undefined, c: undefined })}`, {
+                    scroll: false,
+                  })
+                })
+              }
+              setBuscaAberta((v) => !v)
+            }}
+          >
+            <IconSearch />
+          </button>
+        </div>
+        <form className="search inline at-busca" onSubmit={buscar} role="search">
           <IconSearch />
           <input
+            ref={campoBusca}
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}

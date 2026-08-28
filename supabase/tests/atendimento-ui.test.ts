@@ -399,9 +399,9 @@ describe('acoes de controle', () => {
     await page.click('button:has-text("Assumir")')
     await page.waitForSelector('button:has-text("Transferir")', { timeout: 30_000 })
     await page.click('button:has-text("Transferir")')
-    await page.waitForSelector('.at-equipe')
+    await page.waitForSelector('.at-pop')
 
-    const equipe = await page.locator('.at-equipe').innerText()
+    const equipe = await page.locator('.at-pop').innerText()
     expect(equipe).toContain('João Lima')
     expect(equipe).toContain('Recepção')
     // Diretorio e para operacao, nao para expor contato de ninguem.
@@ -459,6 +459,159 @@ describe('acoes de controle', () => {
 /* ===========================================================================
    Paciente
    ======================================================================== */
+/* ===========================================================================
+   Rodada de UX
+   ======================================================================== */
+describe('refinamentos de UX', () => {
+  it('abrir Transferir NAO empurra a conversa para baixo', async () => {
+    const id = await semearConversa(maria, 'Contato Popover')
+    const page = await abrirAtendimento(maria.ctx, `?c=${id}`)
+    await page.click('button:has-text("Assumir")')
+    await page.waitForSelector('button:has-text("Transferir")', { timeout: 30_000 })
+
+    const antes = await page.locator('.at-linha').boundingBox()
+    await page.click('button:has-text("Transferir")')
+    await page.waitForSelector('.at-pop')
+    const depois = await page.locator('.at-linha').boundingBox()
+
+    // A thread fica exatamente onde estava: o popover flutua sobre a tela em
+    // vez de ocupar uma faixa acima dela.
+    expect(depois!.y).toBe(antes!.y)
+    expect(depois!.height).toBe(antes!.height)
+
+    // E some ao clicar fora, como qualquer popover.
+    await page.click('.at-thread-nome')
+    expect(await page.locator('.at-pop').count()).toBe(0)
+    await page.close()
+  })
+
+  it('sem outra pessoa na equipe, o popover explica', async () => {
+    // Clinica so com Maria: nao ha para quem transferir.
+    const sozinha = await criarUsuario('sozinha', 'Solo Souza')
+    const db = createAnonClient(env)
+    await db.auth.signInWithPassword({ email: sozinha.email, password: sozinha.password })
+    const { data: cl } = await db
+      .rpc('create_clinic_with_owner', { p_name: `Clinica Solo ${registry.testRunId.slice(0, 8)}` })
+      .single<{ id: string }>()
+    registry.registerClinic(cl!.id)
+    const { data: conv } = await db.rpc('conversation_create_manual', {
+      p_clinic_id: cl!.id,
+      p_contact_phone_e164: null,
+      p_contact_name_snapshot: 'Contato Solo',
+      p_patient_id: null,
+    })
+    const convId = (conv as { conversation: { id: string } }).conversation.id
+
+    const ctx = await logar(sozinha.email, sozinha.password)
+    const page = await abrirAtendimento(ctx, `?c=${convId}`)
+    await page.click('button:has-text("Assumir")')
+    await page.waitForSelector('button:has-text("Transferir")', { timeout: 30_000 })
+    await page.click('button:has-text("Transferir")')
+    await page.waitForSelector('.at-pop')
+
+    expect(await page.locator('.at-pop').innerText()).toContain(
+      'Não há outra pessoa na equipe desta clínica.',
+    )
+    await page.close()
+    await ctx.close()
+  })
+
+  it('encerrada: registrar do paciente avisa que reabre', async () => {
+    const id = await semearConversa(maria, 'Contato Encerrado UX')
+    const page = await abrirAtendimento(maria.ctx, `?c=${id}`)
+    await page.click('button:has-text("Encerrar")')
+    await page.waitForSelector('.at-composer:has-text("reabrirá")', { timeout: 30_000 })
+
+    // O aviso do efeito real fica junto do composer.
+    expect(await page.locator('.at-composer').innerText()).toContain(
+      'reabrirá este atendimento',
+    )
+    // E "Paciente falou" continua utilizavel.
+    const inbound = page.locator('.at-direcao button:has-text("Paciente falou")')
+    expect(await inbound.isDisabled()).toBe(false)
+    await page.close()
+  })
+
+  it('encerrada: resposta da equipe fica indisponivel, com explicacao', async () => {
+    const id = await semearConversa(maria, 'Contato Sem Resposta')
+    const page = await abrirAtendimento(maria.ctx, `?c=${id}`)
+    await page.click('button:has-text("Encerrar")')
+    await page.waitForSelector('.at-composer:has-text("Reabra o atendimento")', {
+      timeout: 30_000,
+    })
+
+    const outbound = page.locator('.at-direcao button:has-text("Equipe respondeu")')
+    expect(await outbound.isDisabled()).toBe(true)
+    expect(await page.locator('.at-composer').innerText()).toContain(
+      'Reabra o atendimento para registrar uma resposta da equipe.',
+    )
+    await page.close()
+  })
+
+  it('aberta: as duas direcoes funcionam normalmente', async () => {
+    const id = await semearConversa(maria, 'Contato Aberto UX')
+    const page = await abrirAtendimento(maria.ctx, `?c=${id}`)
+
+    const inbound = page.locator('.at-direcao button:has-text("Paciente falou")')
+    const outbound = page.locator('.at-direcao button:has-text("Equipe respondeu")')
+    expect(await inbound.isDisabled()).toBe(false)
+    expect(await outbound.isDisabled()).toBe(false)
+    // Sem aviso de reabertura numa conversa que nao esta encerrada.
+    expect(await page.locator('.at-composer').innerText()).not.toContain('reabrirá')
+    await page.close()
+  })
+
+  it('eventos continuam legiveis e distintos de mensagem', async () => {
+    const id = await semearConversa(maria, 'Contato Eventos')
+    const page = await abrirAtendimento(maria.ctx, `?c=${id}`)
+    await page.click('button:has-text("Assumir")')
+    await page.waitForSelector('.at-evento', { timeout: 30_000 })
+
+    const evento = page.locator('.at-evento', { hasText: 'assumiu o atendimento' }).first()
+    expect(await evento.innerText()).toMatch(/assumiu o atendimento/i)
+
+    // Contraste real, nao so texto presente: o evento ficava apagado demais.
+    const cor = await evento.evaluate((el) => {
+      const janela = globalThis as unknown as {
+        getComputedStyle: (e: unknown) => { color: string }
+      }
+      return janela.getComputedStyle(el).color
+    })
+    expect(cor).not.toMatch(/148,\s*163,\s*184/) // --faint
+
+    // Evento nao e bolha de mensagem.
+    expect(await page.locator('.at-evento.at-msg').count()).toBe(0)
+    await page.close()
+  })
+
+  it('mobile: a busca abre por icone e continua buscando', async () => {
+    await semearConversa(maria, 'Alvo Movel Buscavel')
+    const ctx = await browser.newContext({
+      baseURL: WEB,
+      viewport: { width: 390, height: 780 },
+      storageState: await maria.ctx.storageState(),
+    })
+    const page = await ctx.newPage()
+    await page.goto('/atendimento', { waitUntil: 'networkidle' })
+    await page.waitForSelector('.at-item', { timeout: 30_000 })
+
+    // Fechada por padrao: nao gasta altura de uma tela que ja e so a fila.
+    expect(await page.locator('.at-busca input').isVisible()).toBe(false)
+
+    await page.click('.at-busca-toggle')
+    expect(await page.locator('.at-busca input').isVisible()).toBe(true)
+
+    await page.fill('.at-busca input', 'Alvo Movel')
+    await page.press('.at-busca input', 'Enter')
+    await page.waitForSelector('.at-item', { timeout: 30_000 })
+    expect(await page.locator('.at-lista').innerText()).toContain('Alvo Movel Buscavel')
+
+    // Os filtros horizontais continuam la.
+    expect(await page.locator('.at-visoes').isVisible()).toBe(true)
+    await ctx.close()
+  })
+})
+
 describe('contexto do paciente', () => {
   it('sem vinculo, oferece vincular ou criar', async () => {
     const id = await semearConversa(maria, 'Contato Sem Paciente')

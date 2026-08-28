@@ -3576,3 +3576,180 @@ th.num {
     height: calc(100vh - var(--topbar-h) - 56px - var(--s3) * 2);
   }
 }
+
+/* =============================================================================
+   ATENDIMENTO — rodada de UX
+
+   Cinco ajustes pontuais. A estrutura de tres areas e a de uma area por vez no
+   celular nao mudam.
+   ============================================================================= */
+
+/* --- 1. TRANSFERIR: popover ancorado, nao faixa acima da thread ----------
+   A secao antiga ocupava a largura inteira e empurrava a conversa para baixo
+   toda vez que alguem clicava em Transferir. O popover fica preso ao botao e
+   nao desloca nada. */
+.at-pop-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.at-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: 268px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  padding: 8px;
+}
+.at-pop-titulo {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 2px 4px 6px;
+}
+.at-pop-vazio {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  padding: 4px 4px 6px;
+}
+
+/* --- 4. HIERARQUIA DO HEADER --------------------------------------------
+   Dois grupos com naturezas diferentes: quem atende e em que pe esta. Antes os
+   quatro botoes tinham o mesmo peso e "Aguardando paciente" parecia texto solto
+   no meio das acoes. */
+.at-grupo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.at-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  flex: none;
+}
+
+/* Acao de status: le-se como mudanca de estado, com o ponto da cor de destino,
+   e nao como mais um botao de acao. */
+.at-status-btn {
+  background: var(--surface);
+  color: var(--ink-2);
+  border: 1px solid var(--line-strong);
+  font-weight: 550;
+}
+.at-status-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--ink);
+  border-color: var(--faint);
+}
+.at-status-btn .dot {
+  width: 7px;
+  height: 7px;
+}
+.at-status-btn[data-para='resolved'] svg {
+  color: var(--st-completed-dot, var(--muted));
+}
+
+/* --- 3. EVENTOS: mais legiveis, ainda sem virar bolha ---------------------
+   Contraste maior, ponto de sistema a esquerda e espacamento proprio. Continua
+   centralizado e sem fundo: e uma nota do sistema, nao alguem falando. */
+.at-evento {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 92%;
+  margin: 3px 0;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  text-align: left;
+}
+.at-evento-marca {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.at-evento-texto {
+  min-width: 0;
+}
+.at-evento-hora {
+  flex: none;
+  margin-left: 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+/* --- 2. COMPOSER EM CONVERSA ENCERRADA ----------------------------------- */
+.at-composer-topo {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.at-composer-nota {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.at-composer-reabre {
+  color: var(--st-awaiting-fg);
+  font-weight: 550;
+}
+.at-direcao button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- 5. BUSCA NO CELULAR -------------------------------------------------
+   No desktop a busca fica sempre visivel e o icone nao existe. No celular a
+   fila e a tela inteira, e a faixa de busca custava altura que quase nunca era
+   usada. */
+.at-fila-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.at-busca-toggle {
+  display: none;
+  padding: 4px 8px;
+}
+
+@media (max-width: 860px) {
+  .at-busca-toggle {
+    display: inline-flex;
+  }
+  .at-fila-head[data-busca='fechada'] .at-busca {
+    display: none;
+  }
+  /* Popover perto da borda em tela estreita: ancora pela direita para nao
+     sair da area visivel. */
+  .at-pop {
+    left: auto;
+    right: 0;
+    width: min(268px, calc(100vw - var(--s5) * 2));
+  }
+}
+
+/* O `.search { display: none }` de <=768px existe para esconder a busca da
+   topbar, mas alcanca tambem a da fila, que usa a mesma classe. Quando o icone
+   abre a busca, ela precisa vencer essa regra. */
+@media (max-width: 768px) {
+  .at-fila-head[data-busca='aberta'] .at-busca {
+    display: flex;
+  }
+}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import type {
   ClinicMemberSummary,
   ConversationDetail,
@@ -86,6 +86,42 @@ export function Thread({
   const [direcao, setDirecao] = useState<'inbound' | 'outbound'>('outbound')
   const [registrando, setRegistrando] = useState(false)
   const [erroComposer, setErroComposer] = useState<string | null>(null)
+  const ancoraTransferir = useRef<HTMLDivElement>(null)
+
+  const encerrada = conversa?.status === 'resolved'
+
+  /*
+   * Conversa encerrada nao aceita resposta da equipe: o backend permitiria, mas
+   * a acao nao faz sentido — a pessoa estaria respondendo algo que ela mesma
+   * declarou encerrado. Mensagem RECEBIDA continua valendo, porque o paciente
+   * voltar a falar e justamente o que reabre o atendimento.
+   *
+   * Trocamos a direcao em vez de deixar o composer travado numa opcao
+   * indisponivel: quem abre um atendimento encerrado quase sempre esta
+   * registrando algo que o paciente disse.
+   */
+  useEffect(() => {
+    if (encerrada) setDirecao('inbound')
+  }, [encerrada])
+
+  /* Popover fecha ao clicar fora ou no Esc, como qualquer outro. */
+  useEffect(() => {
+    if (!transferindo) return
+    const foraDaAncora = (alvo: EventTarget | null) =>
+      alvo instanceof Node && ancoraTransferir.current && !ancoraTransferir.current.contains(alvo)
+    const aoClicar = (e: MouseEvent) => {
+      if (foraDaAncora(e.target)) setTransferindo(false)
+    }
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTransferindo(false)
+    }
+    document.addEventListener('mousedown', aoClicar)
+    document.addEventListener('keydown', aoTeclar)
+    return () => {
+      document.removeEventListener('mousedown', aoClicar)
+      document.removeEventListener('keydown', aoTeclar)
+    }
+  }, [transferindo])
 
   /** Mensagens e eventos numa linha do tempo so, com separador de dia. */
   const linha = useMemo<Entrada[]>(() => {
@@ -120,6 +156,7 @@ export function Thread({
   }
 
   const c = conversa
+  const candidatos = equipe.filter((m) => m.userId !== c.assignedTo)
   const nome = c.patient?.name ?? c.contactNameSnapshot ?? 'Contato sem nome'
   const responsavel = c.assignedToIsMe ? 'Você' : (c.assignedToName ?? 'Outro atendente')
 
@@ -193,107 +230,134 @@ export function Thread({
           </div>
         </div>
 
-        <div className="at-acoes">
-          {/* A acao principal tem peso; as demais ficam secundarias. */}
-          {!c.assignedTo ? (
-            <button
-              type="button"
-              className="btn sm"
-              disabled={pendente}
-              onClick={executar(() => assumirAction(c.id, c.version))}
-            >
-              Assumir
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="btn secondary sm"
-                disabled={pendente}
-                onClick={() => setTransferindo((v) => !v)}
-                aria-expanded={transferindo}
-              >
-                Transferir
-              </button>
-              <button
-                type="button"
-                className="btn secondary sm"
-                disabled={pendente}
-                onClick={executar(() => devolverAction(c.id, c.version))}
-              >
-                Devolver à fila
-              </button>
-            </>
-          )}
+        {/*
+          DOIS GRUPOS, nao uma fileira de botoes iguais.
 
-          {c.status !== 'resolved' ? (
-            <>
-              {c.status !== 'waiting_patient' ? (
+            quem atende  |  em que pe esta
+            -------------+----------------
+            Assumir      |  Aguardando paciente
+            Transferir   |  Encerrar / Reabrir
+            Devolver
+
+          Antes os quatro tinham o mesmo peso e "Aguardando paciente" parecia
+          texto solto no meio das acoes. O separador diz que sao coisas de
+          natureza diferente, e o estilo de status carrega o ponto colorido do
+          estado para onde a acao leva.
+        */}
+        <div className="at-acoes">
+          <div className="at-grupo">
+            {!c.assignedTo ? (
+              <button
+                type="button"
+                className="btn sm"
+                disabled={pendente}
+                onClick={executar(() => assumirAction(c.id, c.version))}
+              >
+                Assumir
+              </button>
+            ) : (
+              <>
+                <div className="at-pop-anchor" ref={ancoraTransferir}>
+                  <button
+                    type="button"
+                    className="btn secondary sm"
+                    disabled={pendente}
+                    onClick={() => setTransferindo((v) => !v)}
+                    aria-expanded={transferindo}
+                    aria-haspopup="dialog"
+                  >
+                    Transferir
+                  </button>
+                  {transferindo ? (
+                    <div className="at-pop" role="dialog" aria-label="Transferir para">
+                      <p className="at-pop-titulo">Transferir para</p>
+                      <ul className="at-equipe">
+                        {candidatos.length === 0 ? (
+                          <li className="at-pop-vazio">
+                            Não há outra pessoa na equipe desta clínica.
+                          </li>
+                        ) : (
+                          candidatos.map((m) => (
+                            <li key={m.userId}>
+                              <button
+                                type="button"
+                                className="at-equipe-item"
+                                disabled={pendente}
+                                onClick={() => {
+                                  setTransferindo(false)
+                                  startTransition(async () => {
+                                    aplicar(await transferirAction(c.id, c.version, m.userId))
+                                  })
+                                }}
+                              >
+                                <span>{m.displayName ?? 'Sem nome cadastrado'}</span>
+                                <span className="badge plain">{PAPEL_UI[m.role] ?? m.role}</span>
+                              </button>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+                {/* Abrir mao do atendimento e menos frequente que transferir, e
+                    nao deve competir por atencao com ele. */}
                 <button
                   type="button"
                   className="btn ghost sm"
                   disabled={pendente}
-                  onClick={executar(() => mudarStatusAction(c.id, c.version, 'waiting_patient'))}
+                  onClick={executar(() => devolverAction(c.id, c.version))}
                 >
-                  Aguardando paciente
+                  Devolver à fila
                 </button>
-              ) : null}
+              </>
+            )}
+          </div>
+
+          <span className="at-sep" aria-hidden="true" />
+
+          <div className="at-grupo">
+            {c.status !== 'resolved' ? (
+              <>
+                {c.status !== 'waiting_patient' ? (
+                  <button
+                    type="button"
+                    className="btn sm at-status-btn"
+                    data-para="waiting_patient"
+                    disabled={pendente}
+                    onClick={executar(() => mudarStatusAction(c.id, c.version, 'waiting_patient'))}
+                  >
+                    <span className="dot awaiting" aria-hidden="true" />
+                    Aguardando paciente
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn sm at-status-btn"
+                  data-para="resolved"
+                  disabled={pendente}
+                  onClick={executar(() => mudarStatusAction(c.id, c.version, 'resolved'))}
+                >
+                  <IconCheck /> Encerrar
+                </button>
+              </>
+            ) : (
               <button
                 type="button"
                 className="btn secondary sm"
                 disabled={pendente}
-                onClick={executar(() => mudarStatusAction(c.id, c.version, 'resolved'))}
+                onClick={executar(() => mudarStatusAction(c.id, c.version, 'open'))}
               >
-                <IconCheck /> Encerrar
+                Reabrir
               </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="btn secondary sm"
-              disabled={pendente}
-              onClick={executar(() => mudarStatusAction(c.id, c.version, 'open'))}
-            >
-              Reabrir
-            </button>
-          )}
+            )}
+          </div>
 
           <button type="button" className="btn ghost sm at-ver-contexto" onClick={onAbrirContexto}>
             <IconUsers /> Paciente
           </button>
         </div>
 
-        {transferindo ? (
-          <div className="at-transferir">
-            <p className="label">Transferir para</p>
-            <ul className="at-equipe">
-              {equipe.filter((m) => m.userId !== c.assignedTo).length === 0 ? (
-                <li className="faint">Não há outra pessoa na equipe desta clínica.</li>
-              ) : (
-                equipe
-                  .filter((m) => m.userId !== c.assignedTo)
-                  .map((m) => (
-                    <li key={m.userId}>
-                      <button
-                        type="button"
-                        className="at-equipe-item"
-                        disabled={pendente}
-                        onClick={() => {
-                          setTransferindo(false)
-                          startTransition(async () => {
-                            aplicar(await transferirAction(c.id, c.version, m.userId))
-                          })
-                        }}
-                      >
-                        <span>{m.displayName ?? 'Sem nome cadastrado'}</span>
-                        <span className="badge plain">{PAPEL_UI[m.role] ?? m.role}</span>
-                      </button>
-                    </li>
-                  ))
-              )}
-            </ul>
-          </div>
-        ) : null}
       </header>
 
       {/*
@@ -331,7 +395,8 @@ export function Thread({
               // Evento nao vira bolha de mensagem: e uma nota do sistema.
               return (
                 <p key={item.e.id} className="at-evento">
-                  {frase(item.e)}
+                  <span className="at-evento-marca" aria-hidden="true" />
+                  <span className="at-evento-texto">{frase(item.e)}</span>
                   <span className="at-evento-hora tabular">{hora(item.em, timezone)}</span>
                 </p>
               )
@@ -382,11 +447,20 @@ export function Thread({
               type="button"
               className={direcao === 'outbound' ? 'on' : ''}
               aria-pressed={direcao === 'outbound'}
+              disabled={encerrada}
+              title={
+                encerrada ? 'Reabra o atendimento para registrar uma resposta da equipe.' : undefined
+              }
               onClick={() => setDirecao('outbound')}
             >
               Equipe respondeu
             </button>
           </div>
+          {encerrada ? (
+            <p className="at-composer-nota">
+              Reabra o atendimento para registrar uma resposta da equipe.
+            </p>
+          ) : null}
         </div>
 
         <textarea
@@ -401,9 +475,18 @@ export function Thread({
         {erroComposer ? <p className="error at-composer-erro">{erroComposer}</p> : null}
 
         <div className="at-composer-pe">
-          <span className="faint">Nada é enviado ao paciente por aqui.</span>
+          {/*
+            Aviso do efeito REAL: inbound numa conversa resolvida dispara a
+            reabertura por trigger. Dizer isso antes evita a surpresa de ver o
+            atendimento voltar para aberto depois de registrar uma anotacao.
+          */}
+          <span className={encerrada ? 'at-composer-reabre' : 'faint'}>
+            {encerrada
+              ? 'Registrar uma nova mensagem do paciente reabrirá este atendimento.'
+              : 'Nada é enviado ao paciente por aqui.'}
+          </span>
           {/* "Registrar", nunca "Enviar": o verbo descreve o que de fato ocorre. */}
-          <button type="submit" className="btn sm" disabled={registrando || texto.trim() === ''}>
+          <button type="submit" className="btn sm" disabled={registrando || texto.trim() === '' || (encerrada && direcao === 'outbound')}>
             {registrando ? 'Registrando…' : 'Registrar mensagem'}
           </button>
         </div>
