@@ -1,0 +1,460 @@
+import { z } from 'zod'
+import type { ClinicRole } from './roles'
+
+/* =============================================================================
+   Estados
+   -----------------------------------------------------------------------------
+   Tres, e a lista e fechada de proposito.
+
+   `overdue`, `today` e `upcoming` NAO estao aqui porque sao recortes de uma
+   consulta, nao estados da pendencia: dependem do relogio, e um estado que muda
+   sozinho com a passagem do tempo teria de ser reescrito por alguem. `atrasada`
+   e `status = 'open' and due_at < agora`, avaliado na hora da pergunta.
+
+   `in_progress` tambem nao: quem comecou uma ligacao que nao completou nao
+   mudou o mundo, e a pendencia continua pendente. O estado so passaria a valer
+   se alguem estivesse esperando por ele.
+   ========================================================================== */
+
+export const TASK_STATUSES = ['open', 'completed', 'cancelled'] as const
+export const taskStatusSchema = z.enum(TASK_STATUSES)
+export type TaskStatus = z.infer<typeof taskStatusSchema>
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  open: 'Aberta',
+  completed: 'Concluída',
+  cancelled: 'Cancelada',
+}
+
+/**
+ * Transicoes validas.
+ *
+ * `completed -> cancelled` e `cancelled -> completed` estao ausentes de
+ * proposito: quem errou reabre primeiro. Duas transicoes explicitas deixam o
+ * caminho legivel no historico, enquanto uma transicao direta entre terminais
+ * apagaria a informacao de que houve engano.
+ */
+export const TASK_STATUS_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
+  open: ['completed', 'cancelled'],
+  completed: ['open'],
+  cancelled: ['open'],
+}
+
+export function canTransitionTask(from: TaskStatus, to: TaskStatus): boolean {
+  return TASK_STATUS_TRANSITIONS[from].includes(to)
+}
+
+/* =============================================================================
+   Limites de texto
+   -----------------------------------------------------------------------------
+   FONTE UNICA. O CHECK do banco, o schema zod e o `maxLength` do input saem
+   daqui. Tres numeros escritos em tres lugares divergem — normalmente quando
+   alguem relaxa um e esquece os outros, e o sintoma aparece como erro 500 numa
+   tela que validou.
+   ========================================================================== */
+
+export const TASK_TITLE_MIN = 3
+export const TASK_TITLE_MAX = 200
+export const TASK_DESCRIPTION_MAX = 2000
+
+/** Metadata de evento nunca passa disto. Igual ao teto de `conversation_events`. */
+export const TASK_EVENT_METADATA_MAX_BYTES = 2048
+
+/* =============================================================================
+   Tipos de evento
+   ========================================================================== */
+
+export const TASK_EVENT_TYPES = [
+  'created',
+  'details_changed',
+  'assigned',
+  'transferred',
+  'released',
+  'due_changed',
+  'completed',
+  'reopened',
+  'cancelled',
+] as const
+export const taskEventTypeSchema = z.enum(TASK_EVENT_TYPES)
+export type TaskEventType = z.infer<typeof taskEventTypeSchema>
+
+export const TASK_EVENT_TYPE_LABELS: Record<TaskEventType, string> = {
+  created: 'Criada',
+  details_changed: 'Texto alterado',
+  assigned: 'Assumida',
+  transferred: 'Transferida',
+  released: 'Devolvida à fila',
+  due_changed: 'Prazo alterado',
+  completed: 'Concluída',
+  reopened: 'Reaberta',
+  cancelled: 'Cancelada',
+}
+
+/* =============================================================================
+   Metadata de evento — formato ESTRITO por tipo
+   ========================================================================== */
+
+const instantSchema = z
+  .string()
+  .datetime({ offset: true, message: 'Informe um instante ISO-8601 com fuso.' })
+
+/** Campos que `details_changed` sabe descrever. */
+export const TASK_EDITABLE_FIELDS = ['title', 'description'] as const
+export const taskEditableFieldSchema = z.enum(TASK_EDITABLE_FIELDS)
+export type TaskEditableField = z.infer<typeof taskEditableFieldSchema>
+
+/**
+ * SOMENTE OS NOMES DOS CAMPOS. Nunca o texto antigo nem o novo.
+ *
+ * A razao e aritmetica antes de ser estetica: `description` vai a 2000
+ * caracteres e o teto de metadata sao 2048 bytes. Guardar `old` e `new`
+ * estouraria a constraint numa unica edicao de descricao longa, e a operacao
+ * falharia com uma mensagem que ninguem relacionaria a causa.
+ *
+ * Ha ainda o efeito colateral: `description` carrega instrucao operacional que
+ * pode mencionar pessoas. Copia-la para os eventos a cada edicao criaria N
+ * copias do mesmo texto sem que ninguem tenha pedido historico textual.
+ *
+ * A pergunta operacional e "alguem mexeu nisto?", nao "qual era a virgula
+ * anterior". Quem precisa do texto atual le a tarefa.
+ */
+export const taskDetailsChangedMetadataSchema = z
+  .object({
+    fields: z
+      .array(taskEditableFieldSchema)
+      .min(1, 'details_changed sem campo alterado nao e um evento, e um no-op.')
+      .refine((f) => new Set(f).size === f.length, 'Campo repetido em fields.'),
+  })
+  .strict()
+
+/**
+ * Snapshot minimo de um responsavel.
+ *
+ * Existe para o historico continuar legivel depois que a pessoa sai da clinica
+ * ou muda de nome: `clinic_member_directory` responde quem e a responsavel
+ * AGORA, e nao tem como responder quem era na epoca.
+ *
+ * Sem `role`. O papel do ator ja e capturado na coluna `actor_role_snapshot` do
+ * evento, e o papel de QUEM RECEBEU a tarefa nao responde nenhuma pergunta
+ * historica — duplica-lo aqui seria habito, nao necessidade.
+ */
+export const taskAssigneeSnapshotSchema = z
+  .object({
+    userId: z.uuid(),
+    displayName: z.string().trim().min(1).max(120).nullable(),
+  })
+  .strict()
+export type TaskAssigneeSnapshot = z.infer<typeof taskAssigneeSnapshotSchema>
+
+export const taskAssignedMetadataSchema = z
+  .object({ to: taskAssigneeSnapshotSchema })
+  .strict()
+
+export const taskTransferredMetadataSchema = z
+  .object({
+    /* Nulo quando a tarefa estava na fila geral: transferir de ninguem para
+       alguem e uma transferencia legitima, e mentir um `from` seria pior. */
+    from: taskAssigneeSnapshotSchema.nullable(),
+    to: taskAssigneeSnapshotSchema,
+  })
+  .strict()
+
+export const taskReleasedMetadataSchema = z
+  .object({ from: taskAssigneeSnapshotSchema })
+  .strict()
+
+/** Os dois lados podem ser nulos: definir prazo, mudar prazo e remover prazo. */
+export const taskDueChangedMetadataSchema = z
+  .object({
+    from: instantSchema.nullable(),
+    to: instantSchema.nullable(),
+  })
+  .strict()
+  .refine((m) => m.from !== m.to, 'due_changed sem mudanca de prazo e um no-op.')
+
+/**
+ * Vazio, e vazio por decisao.
+ *
+ * `created`, `completed`, `cancelled` e `reopened` ja tem tudo o que importa nas
+ * COLUNAS do evento — ator, snapshot do nome, papel e instante. O que sobraria
+ * para a metadata seria copia de coisa que ja esta na linha da tarefa.
+ *
+ * `reopened` nao carrega `from_status`: o evento terminal imediatamente anterior
+ * no log ja diz de onde veio, e repetir criaria uma segunda fonte de verdade
+ * capaz de discordar da primeira.
+ *
+ * `created` nao carrega os ids de contexto. Eles sao IMUTAVEIS e vivem na
+ * propria tarefa, entao a copia so teria efeito no unico caso em que a linha
+ * perde a referencia: exclusao do paciente. E, nesse caso, guardar o uuid de um
+ * paciente apagado nao devolve nome nenhum — mantem apenas um vestigio de uma
+ * associacao que o administrador pediu para apagar.
+ */
+export const taskEmptyMetadataSchema = z.object({}).strict()
+
+/**
+ * Comprimento em BYTES de uma string UTF-8, sem depender do ambiente.
+ *
+ * Este pacote e compilado com `lib: ["ES2023"]` e `types: []` de proposito — ele
+ * roda no servidor e no navegador, e nao pode presumir `Buffer` (Node) nem
+ * `TextEncoder` (DOM/Node, mas ausente da lib declarada).
+ *
+ * `for...of` itera por CODE POINT e nao por unidade UTF-16, entao um emoji conta
+ * como um caractere de 4 bytes em vez de dois de 3 — que e como o Postgres conta.
+ */
+function utf8ByteLength(texto: string): number {
+  let bytes = 0
+  for (const ch of texto) {
+    const cp = ch.codePointAt(0) ?? 0
+    bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4
+  }
+  return bytes
+}
+
+/** Valida a metadata conforme o tipo do evento. Fecha o formato por tipo. */
+export function parseTaskEventMetadata(
+  eventType: TaskEventType,
+  metadata: unknown,
+):
+  | { ok: true; metadata: Record<string, unknown> }
+  | { ok: false; error: string } {
+  const schemas: Record<TaskEventType, z.ZodType> = {
+    created: taskEmptyMetadataSchema,
+    completed: taskEmptyMetadataSchema,
+    cancelled: taskEmptyMetadataSchema,
+    reopened: taskEmptyMetadataSchema,
+    details_changed: taskDetailsChangedMetadataSchema,
+    assigned: taskAssignedMetadataSchema,
+    transferred: taskTransferredMetadataSchema,
+    released: taskReleasedMetadataSchema,
+    due_changed: taskDueChangedMetadataSchema,
+  }
+
+  const parsed = schemas[eventType].safeParse(metadata)
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'metadata invalida.' }
+  }
+
+  /*
+   * O teto vale para o objeto inteiro, nao por campo. Conferido aqui alem do
+   * CHECK do banco para que o erro apareca na borda, com nome de campo, em vez
+   * de virar violacao de constraint no meio de uma transacao.
+   */
+  // O teto vale para o objeto inteiro. Conferido aqui ALEM do CHECK do banco
+  // para que o erro apareca na borda, com nome de campo, em vez de virar
+  // violacao de constraint no meio de uma transacao. O banco continua sendo a
+  // autoridade: ele conta a serializacao dele, que pode diferir em bytes.
+  const bytes = utf8ByteLength(JSON.stringify(parsed.data))
+  if (bytes > TASK_EVENT_METADATA_MAX_BYTES) {
+    return { ok: false, error: `metadata excede ${TASK_EVENT_METADATA_MAX_BYTES} bytes.` }
+  }
+
+  return { ok: true, metadata: parsed.data as Record<string, unknown> }
+}
+
+/* =============================================================================
+   Visoes da fila — consultas, nao colunas
+   -----------------------------------------------------------------------------
+   `overdue`, `today`, `upcoming` e `undated` formam uma PARTICAO COMPLETA de
+   `status = 'open'`: toda tarefa aberta tem `due_at` nulo (undated) ou nao nulo,
+   e nesse caso cai em exatamente uma das outras tres.
+
+   Isso nao e detalhe de UI. E a garantia de que nenhuma pendencia aberta pode
+   ficar invisivel — que e literalmente o que o modulo promete.
+   ========================================================================== */
+
+export const TASK_VIEWS = [
+  'overdue',
+  'today',
+  'upcoming',
+  'undated',
+  'mine',
+  'unassigned',
+  'completed',
+] as const
+export const taskViewSchema = z.enum(TASK_VIEWS)
+export type TaskView = z.infer<typeof taskViewSchema>
+
+export const TASK_VIEW_LABELS: Record<TaskView, string> = {
+  overdue: 'Atrasadas',
+  today: 'Hoje',
+  upcoming: 'Próximas',
+  undated: 'Sem prazo',
+  mine: 'Minhas',
+  unassigned: 'Sem responsável',
+  completed: 'Concluídas',
+}
+
+/** As quatro que cobrem, juntas, todas as pendências abertas. */
+export const TASK_VIEWS_PARTITIONING_OPEN = [
+  'overdue',
+  'today',
+  'upcoming',
+  'undated',
+] as const satisfies readonly TaskView[]
+
+/* =============================================================================
+   Entradas
+   -----------------------------------------------------------------------------
+   Todas `.strict()`. O que NAO aparece em nenhum schema, por construcao:
+
+     clinicId      vem do header validado pelo guard, nunca do corpo
+     createdBy     de auth.uid()
+     completedBy   idem, e carimbado pela operacao
+     cancelledBy   idem
+     version       do servidor; o cliente manda expectedVersion, que e outra coisa
+     timestamps    do servidor
+     actor         do JWT
+     metadata      montada pela RPC a partir do que ela mesma fez
+
+   `.strict()` importa aqui mais do que de costume: sem ele, mandar `createdBy`
+   nao daria erro — o campo seria descartado em silencio, e quem escreveu o
+   cliente ficaria achando que a afirmacao valeu.
+   ========================================================================== */
+
+const titleSchema = z.string().trim().min(TASK_TITLE_MIN).max(TASK_TITLE_MAX)
+
+const descriptionSchema = z
+  .string()
+  .trim()
+  .max(TASK_DESCRIPTION_MAX)
+  .transform((v) => (v === '' ? null : v))
+  .nullable()
+  .optional()
+
+/**
+ * Criacao. Unica operacao sem `expectedVersion` — nao ha versao anterior.
+ *
+ * Os tres contextos sao OPCIONAIS e podem vir todos nulos: uma pendencia sem
+ * contexto e "pendencia geral da clinica", e e legitima. Forcar contexto
+ * empurraria essas tarefas de volta para o papel ou faria alguem inventar um
+ * paciente ficticio, que e pior.
+ *
+ * Os tres tambem sao IMUTAVEIS depois da criacao: nao existe operacao para
+ * troca-los. Contexto responde "sobre o que esta acao nasceu", e reescreve-lo
+ * depois mudaria o significado historico da tarefa. Contexto errado se resolve
+ * cancelando e criando outra.
+ */
+export const createTaskSchema = z
+  .object({
+    title: titleSchema,
+    description: descriptionSchema,
+    dueAt: instantSchema.nullable().optional(),
+    assigneeUserId: z.uuid().nullable().optional(),
+    patientId: z.uuid().nullable().optional(),
+    conversationId: z.uuid().nullable().optional(),
+    appointmentId: z.uuid().nullable().optional(),
+  })
+  .strict()
+
+/**
+ * Toda mutacao de CONTROLE carrega a versao que a tela viu.
+ *
+ * Obrigatoria e sem default. Um default silencioso (ou o campo opcional)
+ * transformaria toda operacao numa corrida: quem esqueceu de mandar
+ * sobrescreveria a decisao de quem chegou antes, e ninguem saberia.
+ */
+const versioned = z.object({
+  expectedVersion: z.number().int().positive(),
+})
+
+/** Pelo menos um campo, senao a operacao e um no-op que gastaria uma versao. */
+export const updateTaskDetailsSchema = versioned
+  .extend({
+    title: titleSchema.optional(),
+    description: descriptionSchema,
+  })
+  .strict()
+  .refine(
+    (v) => v.title !== undefined || v.description !== undefined,
+    'Informe título ou descrição.',
+  )
+
+/** Assumir = atribuir a SI MESMO. Nao ha campo de usuario, de proposito. */
+export const assignTaskSchema = versioned.strict()
+
+export const releaseTaskSchema = versioned.strict()
+
+export const transferTaskSchema = versioned.extend({ assigneeUserId: z.uuid() }).strict()
+
+/** `null` remove o prazo. A tarefa volta para "Sem prazo", que e visao real. */
+export const changeTaskDueSchema = versioned
+  .extend({ dueAt: instantSchema.nullable() })
+  .strict()
+
+export const completeTaskSchema = versioned.strict()
+export const cancelTaskSchema = versioned.strict()
+export const reopenTaskSchema = versioned.strict()
+
+export type CreateTaskInput = z.infer<typeof createTaskSchema>
+export type UpdateTaskDetailsInput = z.infer<typeof updateTaskDetailsSchema>
+export type AssignTaskInput = z.infer<typeof assignTaskSchema>
+export type TransferTaskInput = z.infer<typeof transferTaskSchema>
+export type ReleaseTaskInput = z.infer<typeof releaseTaskSchema>
+export type ChangeTaskDueInput = z.infer<typeof changeTaskDueSchema>
+export type CompleteTaskInput = z.infer<typeof completeTaskSchema>
+export type CancelTaskInput = z.infer<typeof cancelTaskSchema>
+export type ReopenTaskInput = z.infer<typeof reopenTaskSchema>
+export type TaskControlInput = z.infer<typeof versioned>
+
+/* =============================================================================
+   Formas de leitura
+   ========================================================================== */
+
+export interface Task {
+  id: string
+  clinicId: string
+  title: string
+  description: string | null
+  status: TaskStatus
+  assignedTo: string | null
+  dueAt: string | null
+  patientId: string | null
+  conversationId: string | null
+  appointmentId: string | null
+  createdBy: string | null
+  completedBy: string | null
+  completedAt: string | null
+  cancelledBy: string | null
+  cancelledAt: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TaskEvent {
+  id: string
+  taskId: string
+  eventType: TaskEventType
+  actorUserId: string | null
+  actorNameSnapshot: string | null
+  actorRoleSnapshot: ClinicRole | null
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+/** Contadores das sete abas, produzidos por UMA consulta agregada. */
+export type TaskCounts = Record<TaskView, number>
+
+/**
+ * Resultado das operacoes controladas.
+ *
+ * `patient_mismatch` e um outcome PROPRIO, e nao um `conflict`. Sao erros
+ * diferentes e a tela reage diferente: conflito pede recarregar, incoerencia
+ * pede corrigir o paciente. Ambos viram 409 no HTTP, mas quem programa a tela
+ * le este campo, nao o status.
+ */
+export const TASK_OUTCOMES = ['ok', 'conflict', 'not_found', 'patient_mismatch'] as const
+export type TaskOutcome = (typeof TASK_OUTCOMES)[number]
+
+/**
+ * `overdue` NAO vem calculado no cliente.
+ *
+ * Comparar `dueAt` com o relogio do navegador faz um computador com hora errada
+ * mostrar uma fila diferente da real, e o corte de dia depende do fuso da
+ * CLINICA, que o navegador nao conhece. O servidor classifica; a tela exibe.
+ */
+export interface TaskListItem extends Task {
+  isOverdue: boolean
+  assigneeName: string | null
+  patientName: string | null
+}
