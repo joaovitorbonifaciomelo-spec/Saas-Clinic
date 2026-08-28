@@ -1,0 +1,11 @@
+{
+  "runId": "d9a26fc0-b34c-437f-b82d-650fe9cc91b4",
+  "email": "diag-d9a26fc0@example.test",
+  "senha": "Senha-Diag-d9a26fc0!",
+  "users": [
+    "2f14488e-7629-4cff-982e-4370257fb66b"
+  ],
+  "clinics": [
+    "3801fb45-77e4-49ce-9fbd-25fd9f3bacf2"
+  ]
+}
