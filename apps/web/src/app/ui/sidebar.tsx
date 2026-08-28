@@ -2,7 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { IconCalendar, IconCross, IconStethoscope, IconTag, IconToday, IconUsers } from './icons'
+import {
+  IconCalendar,
+  IconCross,
+  IconInbox,
+  IconStethoscope,
+  IconTag,
+  IconToday,
+  IconUsers,
+} from './icons'
 import { initials } from './format'
 
 /**
@@ -15,6 +23,7 @@ import { initials } from './format'
 const OPERACAO = [
   { href: '/dashboard', label: 'Hoje', Icon: IconToday },
   { href: '/agenda', label: 'Agenda', Icon: IconCalendar },
+  { href: '/atendimento', label: 'Atendimento', Icon: IconInbox },
   { href: '/patients', label: 'Pacientes', Icon: IconUsers },
 ] as const
 

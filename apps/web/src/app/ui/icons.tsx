@@ -164,3 +164,11 @@ export const IconCross = ({ size = 18, className }: IconProps) => (
     <path d="M9.6 3h4.8v5.6H20v4.8h-5.6V19H9.6v-5.6H4V8.6h5.6Z" />
   </svg>
 )
+
+/** Caixa de atendimento. Balao de conversa, nao logo de aplicativo nenhum. */
+export const IconInbox = ({ size = 17, className }: IconProps) => (
+  <svg {...base(size, className)}>
+    <path d="M20 14.5a2.5 2.5 0 0 1-2.5 2.5H9l-4 3v-3H4.5A2.5 2.5 0 0 1 2 14.5v-8A2.5 2.5 0 0 1 4.5 4h13A2.5 2.5 0 0 1 20 6.5Z" />
+    <path d="M7 9h8M7 12.5h5" />
+  </svg>
+)

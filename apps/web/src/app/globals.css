@@ -2933,3 +2933,570 @@ th.num {
     transition: none;
   }
 }
+
+/* =============================================================================
+   ATENDIMENTO
+
+   Caixa operacional em tres areas. Reusa card/btn/badge/avatar/master-* do
+   resto do sistema — o que existe aqui e so o que a fila e a thread pedem.
+   ============================================================================= */
+.at-shell {
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr) 300px;
+  gap: var(--s4);
+  align-items: start;
+  height: calc(100vh - var(--topbar-h) - var(--s4) * 2);
+}
+
+/* Aviso de conflito: flutua, nao empurra o layout nem rouba o foco. */
+.at-aviso {
+  position: fixed;
+  left: 50%;
+  bottom: var(--s5);
+  transform: translateX(-50%);
+  z-index: 70;
+  max-width: min(520px, calc(100vw - var(--s5) * 2));
+  background: var(--nav);
+  color: var(--nav-text-strong);
+  padding: 10px var(--s4);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: var(--shadow-pop);
+}
+
+/* --- FILA --------------------------------------------------------------- */
+.at-fila {
+  height: 100%;
+  max-height: none;
+  top: auto;
+  position: static;
+}
+.at-fila-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s2);
+  padding: var(--s3);
+}
+.at-titulo {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.at-visoes {
+  display: flex;
+  gap: 4px;
+  padding: 0 var(--s3) var(--s2);
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--line-soft);
+}
+.at-visoes::-webkit-scrollbar {
+  display: none;
+}
+.at-visao {
+  flex: none;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.at-visao:hover {
+  background: var(--surface-hover);
+}
+.at-visao.is-on {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  color: var(--brand-hover);
+  font-weight: 600;
+}
+
+.at-lista {
+  flex: 1;
+  min-height: 0;
+}
+.at-item {
+  align-items: flex-start;
+  gap: var(--s2);
+  padding: 10px var(--s3);
+}
+.at-item-corpo {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.at-item-topo {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.at-item-topo .master-name {
+  flex: 1;
+  min-width: 0;
+}
+.at-item-hora {
+  font-size: 11px;
+  flex: none;
+}
+.at-item-preview {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.at-seta {
+  color: var(--faint);
+  margin-right: 3px;
+}
+.at-item-rodape {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.at-resp,
+.at-tel {
+  font-size: 11px;
+}
+.at-atencao {
+  flex: none;
+  padding-top: 4px;
+}
+
+/* Status como badge discreto: mesmo par fundo suave + texto legivel da agenda. */
+.badge.at-st-open {
+  background: var(--brand-soft);
+  color: var(--brand-hover);
+}
+.badge.at-st-waiting_patient {
+  background: var(--st-awaiting-bg);
+  color: var(--st-awaiting-fg);
+}
+.badge.at-st-resolved {
+  background: var(--st-scheduled-bg);
+  color: var(--st-scheduled-fg);
+}
+
+.at-vazio {
+  padding: var(--s6) var(--s4);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  align-items: center;
+}
+.at-vazio-titulo {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.at-vazio-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 30ch;
+}
+.at-mais,
+.at-mais-msgs {
+  padding: var(--s2) var(--s3);
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid var(--line-soft);
+}
+.at-mais-msgs {
+  border-top: 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* --- THREAD ------------------------------------------------------------- */
+.at-thread {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.at-thread-vazia {
+  justify-content: center;
+}
+.at-thread-head {
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.at-thread-quem {
+  min-width: 0;
+  flex: 1;
+}
+.at-thread-nome {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.at-thread-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.at-thread-meta svg {
+  vertical-align: -2px;
+}
+.at-acoes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.at-voltar,
+.at-ver-contexto {
+  display: none;
+}
+
+.at-transferir {
+  flex-basis: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: var(--s3);
+  background: var(--surface-sunk);
+}
+.at-equipe {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+.at-equipe-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  font-size: 13px;
+  text-align: left;
+}
+.at-equipe-item:hover:not(:disabled) {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+}
+
+/* Faixa de modo manual: visivel e permanente, sem parecer alerta de erro. */
+.at-modo-manual {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  padding: 7px var(--s4);
+  background: var(--st-awaiting-bg);
+  color: var(--st-awaiting-fg);
+  font-size: 12px;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--line-soft);
+}
+.at-modo-manual strong {
+  font-weight: 650;
+}
+
+.at-linha {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  background: var(--surface-sunk);
+}
+.at-dia {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: var(--s2) 0 var(--s1);
+}
+.at-dia span {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+/* Evento do sistema: nota discreta entre mensagens, nunca uma bolha. */
+.at-evento {
+  align-self: center;
+  max-width: 90%;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  padding: 2px 0;
+}
+.at-evento-hora {
+  margin-left: 6px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.at-msg {
+  max-width: min(560px, 78%);
+  border-radius: 12px;
+  padding: 8px 11px;
+  border: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+.at-msg.is-contato {
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+.at-msg.is-equipe {
+  align-self: flex-end;
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  border-bottom-right-radius: 4px;
+}
+.at-msg-corpo {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.at-msg-pe {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.at-msg-autor {
+  font-weight: 600;
+}
+.at-msg-registro {
+  font-style: italic;
+  color: var(--faint);
+}
+
+/* --- COMPOSER ----------------------------------------------------------- */
+.at-composer {
+  border-top: 1px solid var(--line-soft);
+  padding: var(--s3) var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  background: var(--surface);
+}
+.at-composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 62px;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.at-direcao {
+  font-size: 12px;
+}
+.at-composer-pe {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.at-composer-erro {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* --- CONTEXTO ----------------------------------------------------------- */
+.at-contexto {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.at-contexto-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.at-contexto-head h3 {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+.at-fechar-contexto {
+  display: none;
+}
+.at-paciente {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+}
+.at-paciente-nome {
+  font-weight: 650;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.at-contexto-bloco {
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+}
+.at-proxima-quando {
+  font-weight: 600;
+}
+.at-contexto-acoes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: var(--s3);
+}
+.at-sem-paciente-titulo {
+  font-weight: 600;
+  color: var(--ink-2);
+  font-size: 13.5px;
+}
+.at-vincular {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.at-pacientes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.at-paciente-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+}
+.at-paciente-item:hover:not(:disabled) {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+}
+.at-paciente-item .master-name {
+  display: block;
+  font-size: 13px;
+}
+
+/* --- FORMULARIO DE NOVO ATENDIMENTO ------------------------------------- */
+.at-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.at-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.at-form-nota {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  background: var(--surface-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+.at-form-dica {
+  font-size: 11.5px;
+}
+.at-form-pe {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+
+/* --- RESPONSIVO ---------------------------------------------------------
+   Tablet: a terceira coluna vira gaveta.
+   Mobile: uma area por vez. Tres colunas em 390px nao viram tres colunas
+   pequenas — viram tres colunas inutilizaveis.
+   ------------------------------------------------------------------------ */
+@media (max-width: 1200px) {
+  .at-shell {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+  .at-contexto {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 100%);
+    z-index: 65;
+    border-radius: 0;
+    transform: translateX(100%);
+    transition: transform 0.18s ease;
+    box-shadow: var(--shadow-pop);
+  }
+  .at-contexto.is-aberto {
+    transform: none;
+  }
+  .at-fechar-contexto,
+  .at-ver-contexto {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 860px) {
+  .at-shell {
+    grid-template-columns: minmax(0, 1fr);
+    height: calc(100vh - var(--topbar-h) - var(--s3) * 2);
+  }
+  .at-shell[data-area='fila'] .at-thread {
+    display: none;
+  }
+  .at-shell[data-area='conversa'] .at-fila {
+    display: none;
+  }
+  .at-voltar {
+    display: inline-flex;
+  }
+  .at-msg {
+    max-width: 88%;
+  }
+  .at-thread-head {
+    padding: var(--s2) var(--s3);
+  }
+  .at-acoes {
+    flex-basis: 100%;
+  }
+}
