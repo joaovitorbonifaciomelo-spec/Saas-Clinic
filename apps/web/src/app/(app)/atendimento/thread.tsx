@@ -240,7 +240,7 @@ export function Thread({
               ) : null}
               <button
                 type="button"
-                className="btn ghost sm"
+                className="btn secondary sm"
                 disabled={pendente}
                 onClick={executar(() => mudarStatusAction(c.id, c.version, 'resolved'))}
               >

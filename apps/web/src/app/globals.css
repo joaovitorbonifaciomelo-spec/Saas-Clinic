@@ -2944,8 +2944,19 @@ th.num {
   display: grid;
   grid-template-columns: 330px minmax(0, 1fr) 300px;
   gap: var(--s4);
-  align-items: start;
+  /*
+   * SEM align-items: start. Com ele as colunas dimensionam pelo conteudo em vez
+   * de esticar, e o `height: 100%` dos filhos passa a resolver contra uma area
+   * automatica — o rodape do composer e o ultimo botao do contexto ficavam
+   * cortados fora da tela. Esticando, cada coluna tem exatamente a altura da
+   * linha e o overflow interno de cada uma faz o resto.
+   */
+  align-items: stretch;
   height: calc(100vh - var(--topbar-h) - var(--s4) * 2);
+  min-height: 0;
+}
+.at-shell > * {
+  min-height: 0;
 }
 
 /* Aviso de conflito: flutua, nao empurra o layout nem rouba o foco. */
@@ -3135,7 +3146,12 @@ th.num {
 }
 .at-thread-quem {
   min-width: 0;
-  flex: 1;
+  /*
+   * Base de 240px: sem ela o bloco encolhia ate caber entre os botoes, e o nome
+   * do contato quebrava em duas linhas com o telefone em tres. As acoes descem
+   * para a linha de baixo, que e o comportamento certo quando falta largura.
+   */
+  flex: 1 1 240px;
 }
 .at-thread-nome {
   font-size: 15px;
@@ -3498,5 +3514,30 @@ th.num {
   }
   .at-acoes {
     flex-basis: 100%;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Ajustes vindos da revisao das capturas
+   -------------------------------------------------------------------------- */
+
+/* Os filtros rolam na horizontal e o corte seco nao dizia isso. A borda que
+   desvanece e o unico sinal de que ha mais a direita, ja que a barra de rolagem
+   esta escondida. */
+.at-visoes {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+
+/* No celular a fila e a tela inteira e NADA esta aberto ao lado. O realce da
+   primeira conversa — correto no desktop, onde ela aparece na coluna do meio —
+   ali sugeria que a pessoa ja abriu aquele atendimento. */
+@media (max-width: 860px) {
+  .at-shell[data-area='fila'] .at-item.is-selected {
+    background: transparent;
+    box-shadow: none;
+  }
+  .at-shell[data-area='fila'] .at-item.is-selected::before {
+    display: none;
   }
 }
