@@ -294,6 +294,119 @@ cliente adiantado.
 
 ---
 
+## 6.15 Atendimento: controle e concorrência
+
+### A API não implementa concorrência
+
+Não existe `SELECT version` seguido de `UPDATE` em lugar nenhum. Essa sequência
+tem uma janela entre a leitura e a escrita, e é exatamente nela que duas
+atendentes assumem a mesma conversa. O filtro por versão está **dentro do
+próprio UPDATE**, na função do banco:
+
+```sql
+update public.conversations
+   set assigned_to = auth.uid()
+ where id = p_conversation_id
+   and version = p_expected_version
+   and assigned_to is null
+```
+
+Uma operação, uma linha afetada ou nenhuma. Não há como as duas vencerem.
+
+### Contrato uniforme
+
+| Rota | RPC | Sucesso |
+|---|---|---|
+| `POST /conversations/:id/assign` | `conversation_assign` | 200 |
+| `POST /conversations/:id/transfer` | `conversation_transfer` | 200 |
+| `POST /conversations/:id/release` | `conversation_release` | 200 |
+| `PATCH /conversations/:id/status` | `conversation_set_status` | 200 |
+| `POST /conversations/:id/patient` | `conversation_link_patient` | 200 |
+| `DELETE /conversations/:id/patient` | `conversation_unlink_patient` | 200 |
+
+Todas exigem `expectedVersion`, todas são schema **strict** (campo desconhecido
+é 400), e nenhuma aceita `clinicId` no corpo.
+
+`outcome` → HTTP, para as seis: `ok` → **200**, `conflict` → **409**,
+`not_found` → **404**.
+
+**Uma chamada por operação.** A RPC já devolve a conversa atualizada, então não
+há GET depois. Medido: assign 158ms, transfer 166ms, release 167ms, status
+168ms, link 159ms, unlink 163ms — todas dominadas pelo `auth.getUser()` por
+requisição, não pela escrita.
+
+### `assign` não aceita usuário
+
+"Assumir" é sempre atribuir a si mesmo, e quem decide quem é "si mesmo" é o
+`auth.uid()` dentro da RPC. Aceitar um `userId` aqui transformaria a operação em
+"atribuir a qualquer um" — que é outra coisa, chama-se transferência, e tem
+regra própria.
+
+### Por que `DELETE` leva a versão na query
+
+Corpo em `DELETE` não atravessa proxies de forma confiável. A garantia de
+concorrência não pode depender de uma parte da requisição que alguém no caminho
+pode descartar, então `expectedVersion` vai na query string. Continua
+obrigatória — só muda o transporte.
+
+### O 409
+
+```json
+{
+  "statusCode": 409,
+  "error": "conversation_conflict",
+  "message": "Este atendimento foi alterado por outra pessoa.",
+  "conversation": { "...": "estado atual" }
+}
+```
+
+O estado atual vai junto para a tela dizer *"Maria assumiu esta conversa"* em vez
+de *"erro ao salvar"*, sem recarregar e sem uma segunda requisição.
+
+**`conflict` cobre dois casos, e está certo que o cliente veja os dois igual:**
+a versão ficou velha, **ou** a pré-condição da operação não vale mais (assumir
+algo que já tem dono, liberar algo que já está na fila). Nos dois, alguém chegou
+antes.
+
+**Nunca sai daqui:** SQL, nome de constraint, versão de outra entidade, dado de
+outro tenant. E `conversation` só aparece porque quem recebeu 409 já podia ler
+aquela conversa — `conversation_conflict` revalida o membership antes de devolver
+estado, então **quem perdeu o acesso durante a corrida recebe 404, não um 409
+com o conteúdo**.
+
+### Comportamento real que vale registrar
+
+- **Status igual ao atual é no-op de verdade:** o trigger de versão só
+  incrementa quando algo relevante muda, e a RPC só grava evento quando
+  `status is distinct from` o anterior. Resultado: **sem evento e sem incremento
+  de versão** — `updated_at` muda, o resto não. A API não fabrica nenhum dos dois.
+- **Transição inválida** sobe do trigger como `INVALID_STATUS_TRANSITION`
+  (errcode 22023) e vira **400**. A máquina de estados vive só no banco; o zod
+  apenas recusa valores fora do enum.
+- **Vincular paciente sobre um vínculo existente SUBSTITUI**, guardado pela
+  versão, e emite `patient_linked` com o novo `patient_id` — **não** emite um
+  `patient_unlinked` do anterior. O histórico fica legível (dois
+  `patient_linked` com ids diferentes), mas quem for reconstruir a linha do
+  tempo precisa saber disso. É a semântica da RPC, não uma decisão da API.
+- **Destinatário ou paciente inválido** vira 400 com mensagem genérica —
+  *"Responsavel invalido para esta clinica."* / *"Paciente invalido para esta
+  clinica."* Não existe, é de outro tenant e não é elegível respondem igual:
+  distinguir já seria revelar a existência da conta.
+
+### Diretório da equipe: `GET /clinics/members`
+
+Ficou em `/clinics`, e não num recurso novo `/clinic-members`, porque a equipe é
+da **clínica** — o Atendimento é só o primeiro consumidor. Qual clínica vem do
+header que o guard já validou. O `ClinicMembershipGuard` entra só nessa rota; as
+outras duas do controller respondem sobre o próprio usuário.
+
+Devolve `userId`, `displayName`, `role`. Serve para exibir o responsável atual e
+montar o seletor de transferência — **é leitura, não autorização**. Quem pode
+receber uma transferência continua sendo decidido pela FK composta dentro de
+`conversation_transfer`.
+
+---
+
 ## 6.2 Atendimento: o que foi fechado e o que segue aberto
 
 ### ✅ FECHADO — `occurred_at` no futuro (migrations 0018/0019)

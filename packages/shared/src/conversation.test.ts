@@ -12,7 +12,9 @@ import {
   registerManualMessageSchema,
   assignConversationSchema,
   canTransitionConversation,
-  changeConversationStatusSchema,
+  setConversationStatusSchema,
+  releaseConversationSchema,
+  unlinkConversationPatientSchema,
   registerConversationSchema,
   isUnclaimed,
   isValidChannelProviderPair,
@@ -248,29 +250,75 @@ describe('schemas de entrada', () => {
     expect(registerManualMessageSchema.safeParse({ direction: 'sideways', body: 'oi' }).success).toBe(false)
   })
 
-  it('toda mutacao de controle exige versao', () => {
+  it('toda mutacao de controle exige expectedVersion', () => {
+    // Sem default e sem opcional: um campo de versao que pode faltar
+    // transformaria toda operacao numa corrida silenciosa.
     expect(assignConversationSchema.safeParse({}).success).toBe(false)
-    expect(assignConversationSchema.safeParse({ version: 3 }).success).toBe(true)
-    expect(assignConversationSchema.safeParse({ version: 0 }).success).toBe(false)
-    expect(assignConversationSchema.safeParse({ version: -1 }).success).toBe(false)
-    expect(assignConversationSchema.safeParse({ version: 1.5 }).success).toBe(false)
+    expect(assignConversationSchema.safeParse({ expectedVersion: 3 }).success).toBe(true)
+    expect(assignConversationSchema.safeParse({ expectedVersion: 0 }).success).toBe(false)
+    expect(assignConversationSchema.safeParse({ expectedVersion: -1 }).success).toBe(false)
+    expect(assignConversationSchema.safeParse({ expectedVersion: 1.5 }).success).toBe(false)
+  })
+
+  it('assumir NAO aceita escolher a pessoa', () => {
+    // "Assumir" e sempre para si mesmo. Um campo de usuario aqui viraria
+    // "atribuir a qualquer um", que e outra operacao — a transferencia.
+    expect(
+      assignConversationSchema.safeParse({ expectedVersion: 1, assigneeUserId: UUID }).success,
+    ).toBe(false)
+    expect(assignConversationSchema.safeParse({ expectedVersion: 1, userId: UUID }).success).toBe(
+      false,
+    )
+  })
+
+  it('nenhum schema de controle aceita clinicId', () => {
+    // O tenant vem do header ja validado pelo guard, nunca do corpo.
+    for (const schema of [
+      assignConversationSchema,
+      releaseConversationSchema,
+      setConversationStatusSchema,
+    ]) {
+      expect(schema.safeParse({ expectedVersion: 1, status: 'resolved', clinicId: UUID }).success).toBe(
+        false,
+      )
+    }
   })
 
   it('transferencia exige destinatario', () => {
-    expect(transferConversationSchema.safeParse({ version: 1 }).success).toBe(false)
-    expect(transferConversationSchema.safeParse({ version: 1, toUserId: UUID }).success).toBe(true)
+    expect(transferConversationSchema.safeParse({ expectedVersion: 1 }).success).toBe(false)
+    expect(
+      transferConversationSchema.safeParse({ expectedVersion: 1, assigneeUserId: UUID }).success,
+    ).toBe(true)
+    expect(
+      transferConversationSchema.safeParse({ expectedVersion: 1, assigneeUserId: 'nao-uuid' })
+        .success,
+    ).toBe(false)
+  })
+
+  it('desvincular aceita a versao vinda da query, que e texto', () => {
+    // DELETE nao carrega corpo de forma confiavel atraves de proxies, entao a
+    // versao viaja na query string — e query string e sempre string.
+    expect(unlinkConversationPatientSchema.safeParse({ expectedVersion: '3' }).success).toBe(true)
+    expect(unlinkConversationPatientSchema.safeParse({}).success).toBe(false)
+    expect(unlinkConversationPatientSchema.safeParse({ expectedVersion: '0' }).success).toBe(false)
+    expect(unlinkConversationPatientSchema.safeParse({ expectedVersion: 'abc' }).success).toBe(
+      false,
+    )
   })
 
   it('mudanca de status so aceita status que existe', () => {
+    // O schema recusa valores fora do enum. QUAL transicao e permitida continua
+    // sendo decisao do banco — nao ha maquina de estados duplicada aqui.
     expect(
-      changeConversationStatusSchema.safeParse({ version: 1, status: 'resolved' }).success,
+      setConversationStatusSchema.safeParse({ expectedVersion: 1, status: 'resolved' }).success,
     ).toBe(true)
     expect(
-      changeConversationStatusSchema.safeParse({ version: 1, status: 'waiting_clinic' }).success,
+      setConversationStatusSchema.safeParse({ expectedVersion: 1, status: 'waiting_clinic' })
+        .success,
     ).toBe(false)
-    expect(changeConversationStatusSchema.safeParse({ version: 1, status: 'new' }).success).toBe(
-      false,
-    )
+    expect(
+      setConversationStatusSchema.safeParse({ expectedVersion: 1, status: 'new' }).success,
+    ).toBe(false)
   })
 })
 

@@ -306,16 +306,47 @@ export const addMessageSchema = registerManualMessageSchema
  * corrida esperando para acontecer, e deixar o campo opcional garantiria que
  * alguem esqueceria de mandar.
  */
-const versioned = z.object({ version: z.number().int().positive() })
-
-export const assignConversationSchema = versioned
-export const releaseConversationSchema = versioned
-export const transferConversationSchema = versioned.extend({ toUserId: z.uuid() })
-export const changeConversationStatusSchema = versioned.extend({
-  status: conversationStatusSchema,
+const versioned = z.object({
+  /*
+   * A VERSAO QUE A TELA VIU.
+   *
+   * Obrigatoria e sem default. Um default silencioso (ou o campo opcional)
+   * transformaria toda operacao de controle numa corrida: quem esqueceu de
+   * mandar sobrescreveria a decisao de quem chegou antes, e ninguem saberia.
+   */
+  expectedVersion: z.number().int().positive(),
 })
-export const linkPatientSchema = versioned.extend({ patientId: z.uuid() })
-export const unlinkPatientSchema = versioned
+
+/** Assumir = atribuir a SI MESMO. Nao ha campo de usuario, de proposito. */
+export const assignConversationSchema = versioned.strict()
+
+export const releaseConversationSchema = versioned.strict()
+
+export const transferConversationSchema = versioned
+  .extend({ assigneeUserId: z.uuid() })
+  .strict()
+
+export const setConversationStatusSchema = versioned
+  .extend({ status: conversationStatusSchema })
+  .strict()
+
+export const linkConversationPatientSchema = versioned
+  .extend({ patientId: z.uuid() })
+  .strict()
+
+/*
+ * Desvincular chega por DELETE, que nao carrega corpo de forma confiavel
+ * atraves de proxies. A versao vem na query string — continua obrigatoria, so
+ * muda o transporte. `coerce` porque query string e sempre texto.
+ */
+export const unlinkConversationPatientSchema = z
+  .object({ expectedVersion: z.coerce.number().int().positive() })
+  .strict()
+
+/** @deprecated nomes antigos, mantidos enquanto nada mais os referencia. */
+export const changeConversationStatusSchema = setConversationStatusSchema
+export const linkPatientSchema = linkConversationPatientSchema
+export const unlinkPatientSchema = unlinkConversationPatientSchema
 
 export type RegisterConversationInput = z.infer<typeof registerConversationSchema>
 export type RegisterManualMessageInput = z.infer<typeof registerManualMessageSchema>
@@ -346,9 +377,15 @@ export interface RegisterManualMessageResult {
   message: Message
   conversation: Conversation
 }
+export type ConversationControlInput = z.infer<typeof versioned>
+export type AssignConversationInput = z.infer<typeof assignConversationSchema>
+export type ReleaseConversationInput = z.infer<typeof releaseConversationSchema>
 export type TransferConversationInput = z.infer<typeof transferConversationSchema>
-export type ChangeConversationStatusInput = z.infer<typeof changeConversationStatusSchema>
-export type LinkPatientInput = z.infer<typeof linkPatientSchema>
+export type SetConversationStatusInput = z.infer<typeof setConversationStatusSchema>
+export type LinkConversationPatientInput = z.infer<typeof linkConversationPatientSchema>
+export type UnlinkConversationPatientInput = z.infer<typeof unlinkConversationPatientSchema>
+export type ChangeConversationStatusInput = SetConversationStatusInput
+export type LinkPatientInput = LinkConversationPatientInput
 
 /* =============================================================================
    Formas de leitura
@@ -635,6 +672,43 @@ export const CONVERSATION_VERSION_CONFLICT = 'CONVERSATION_VERSION_CONFLICT' as 
  * Conversa inexistente ou de outro tenant NAO chega aqui: responde 404, com o
  * mesmo corpo dos dois casos, para nao revelar existencia.
  */
+/**
+ * Um membro da equipe, como a tela precisa dele.
+ *
+ * Tres campos porque a operacao precisa de tres: identificar (`userId`), exibir
+ * (`displayName`) e diferenciar papeis na UI (`role`). Sem e-mail e sem
+ * metadados de auth — o read model do banco ja nao os devolve.
+ *
+ * `displayName` nulo significa "nome indisponivel", NUNCA "sem responsavel".
+ */
+export interface ClinicMemberSummary {
+  userId: string
+  displayName: string | null
+  role: ClinicRole
+}
+
+export const CONVERSATION_CONFLICT_ERROR = 'conversation_conflict' as const
+
+/**
+ * Corpo do 409 das operacoes de controle.
+ *
+ * `conversation` e o estado ATUAL, no mesmo formato que os demais endpoints
+ * devolvem — a tela re-renderiza com ele e ja mostra quem assumiu, sem
+ * recarregar e sem uma segunda requisicao.
+ *
+ * O QUE NAO ESTA AQUI: mensagem do Postgres, nome de constraint, versao de
+ * outras entidades, qualquer dado de outro tenant. E `conversation` so aparece
+ * porque quem recebeu 409 JA podia ler essa conversa — se o vinculo tiver sido
+ * removido durante a corrida, a resposta e 404 e nao passa por aqui.
+ */
+export interface ConversationConflictResponse {
+  statusCode: 409
+  error: typeof CONVERSATION_CONFLICT_ERROR
+  message: string
+  conversation: Conversation
+}
+
+/** @deprecated forma anterior, antes do contrato uniforme do Bloco 3. */
 export interface ConversationVersionConflict {
   error: typeof CONVERSATION_VERSION_CONFLICT
   current: ConversationListItem

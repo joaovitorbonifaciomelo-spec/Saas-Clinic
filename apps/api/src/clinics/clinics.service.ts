@@ -1,5 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common'
-import type { Clinic, ClinicMembership, ClinicRole, CreateClinicInput } from '@clinicas/shared'
+import type {
+  Clinic,
+  ClinicMemberSummary,
+  ClinicMembership,
+  ClinicRole,
+  CreateClinicInput,
+} from '@clinicas/shared'
 import { SUPABASE_USER_CLIENT, type UserScopedClient } from '../supabase/supabase.types'
 import { mapPostgrestError } from '../common/postgrest-error'
 
@@ -19,6 +25,44 @@ interface ClinicRow {
 @Injectable()
 export class ClinicsService {
   constructor(@Inject(SUPABASE_USER_CLIENT) private readonly supabase: UserScopedClient) {}
+
+  /**
+   * Equipe da clinica ativa, para a tela exibir nomes e montar o seletor de
+   * transferencia.
+   *
+   * Fica aqui, e nao em ConversationsService, porque a equipe e da CLINICA — o
+   * Atendimento e so o primeiro consumidor. Nao virou recurso de topo
+   * (`/clinic-members`) porque a clinica ja e o recurso: a rota e
+   * `GET /clinics/members`, e qual clinica vem do header que o guard validou.
+   *
+   * NAO E AUTORIZACAO. Quem pode receber uma transferencia continua sendo
+   * decidido pela FK composta (clinic_id, assigned_to) -> clinic_members, dentro
+   * de `conversation_transfer`. Uma lista desatualizada produz no maximo uma
+   * opcao que o banco recusa; nunca uma transferencia indevida aceita.
+   *
+   * O read model do banco ja limita o que sai: user_id, nome e papel. Nao ha
+   * e-mail nem metadados para filtrar aqui, e a policy de `profiles` continua
+   * intacta — a funcao e SECURITY DEFINER e valida o membership de quem
+   * pergunta antes de ler qualquer coisa.
+   */
+  async listMembers(clinicId: string): Promise<ClinicMemberSummary[]> {
+    const { data, error } = await this.supabase.rpc('clinic_member_directory', {
+      p_clinic_id: clinicId,
+    })
+    if (error) throw mapPostgrestError(error)
+
+    const linhas = (data ?? []) as {
+      user_id: string
+      display_name: string | null
+      role: ClinicRole
+    }[]
+
+    return linhas.map((m) => ({
+      userId: m.user_id,
+      displayName: m.display_name,
+      role: m.role,
+    }))
+  }
 
   /**
    * Clinicas do usuario. Nao ha filtro por user_id na query de proposito: o RLS

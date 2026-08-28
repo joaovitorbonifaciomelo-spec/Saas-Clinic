@@ -817,11 +817,14 @@ describe('proveniencia de agendamento', () => {
  *      cru"          -> atendimento-api-escrita: normalizacao de telefone >
  *                       telefone repetido devolve 200 com a conversa EXISTENTE
  *
- * Os dois abaixo dependem dos endpoints de CONTROLE (assumir, transferir,
- * mudar status), que carregam concorrencia otimistica e sao o Bloco 3. Ficam
- * como pendencia declarada em vez de sumirem da lista.
+ * Os dois ultimos viraram teste no Bloco 3, em `atendimento-api-controle.test.ts`:
+ *
+ *   - "outcome conflict do RPC vira 409 com o estado atual"
+ *                    -> 404 x 409 > versao stale na PROPRIA clinica devolve 409
+ *   - "outcome not_found do RPC vira 404, nunca 409"
+ *                    -> 404 x 409 > UUID inexistente e conversa de outra
+ *                       clinica dao 404 IDENTICO, e > membership removido no
+ *                       meio da corrida NAO recebe 409 com estado
+ *
+ * Nao restam pendencias declaradas neste arquivo.
  */
-describe('nivel HTTP (controle — Bloco 3)', () => {
-  it.todo('outcome conflict do RPC vira 409 com o estado atual')
-  it.todo('outcome not_found do RPC vira 404, nunca 409')
-})

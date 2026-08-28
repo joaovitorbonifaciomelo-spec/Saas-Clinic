@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
+  Patch,
   Post,
   Query,
   Res,
@@ -13,8 +15,21 @@ import type { Response } from 'express'
 import {
   listConversationsQuerySchema,
   paginationQuerySchema,
+  assignConversationSchema,
+  linkConversationPatientSchema,
   registerConversationSchema,
   registerManualMessageSchema,
+  releaseConversationSchema,
+  setConversationStatusSchema,
+  transferConversationSchema,
+  unlinkConversationPatientSchema,
+  type AssignConversationInput,
+  type Conversation,
+  type LinkConversationPatientInput,
+  type ReleaseConversationInput,
+  type SetConversationStatusInput,
+  type TransferConversationInput,
+  type UnlinkConversationPatientInput,
   type RegisterConversationInput,
   type RegisterConversationResult,
   type RegisterManualMessageInput,
@@ -35,14 +50,15 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe'
 import { ConversationsService } from './conversations.service'
 
 /**
- * Leitura (Bloco 1) e registro manual (Bloco 2).
+ * Leitura, registro manual e controle do Atendimento.
  *
  * Toda escrita passa por funcao controlada no banco — `authenticated` tem
- * apenas SELECT nas tres tabelas. Nao ha INSERT nesta camada.
+ * apenas SELECT nas tres tabelas. Nao ha INSERT nem UPDATE nesta camada.
  *
- * AINDA NAO EXISTEM aqui os endpoints de controle (assumir, transferir,
- * liberar, mudar status, vincular paciente). Eles carregam concorrencia
- * otimistica por versao e sao o Bloco 3.
+ * CONCORRENCIA: as operacoes de controle exigem `expectedVersion` e NAO fazem
+ * "ler versao, depois escrever". O filtro por versao esta dentro do proprio
+ * UPDATE, na RPC — sem janela entre leitura e escrita, que e onde duas
+ * atendentes assumiriam a mesma conversa.
  */
 @Controller('conversations')
 @UseGuards(AuthGuard, ClinicMembershipGuard)
@@ -127,5 +143,90 @@ export class ConversationsController {
     @Body(new ZodValidationPipe(registerManualMessageSchema)) body: RegisterManualMessageInput,
   ): Promise<RegisterManualMessageResult> {
     return this.conversations.registerManualMessage(clinicId, id, body)
+  }
+
+  /* -------------------------------------------------------------------------
+     CONTROLE (Bloco 3)
+
+     Todas carregam `expectedVersion` e todas respondem igual:
+       200 ok | 409 conflito com o estado atual | 404 inexistente ou alheia
+
+     Nenhuma aceita `clinicId` no corpo — a clinica vem do header ja validado.
+  ------------------------------------------------------------------------- */
+
+  /**
+   * Assumir o atendimento.
+   *
+   * NAO ha campo de usuario no corpo: "assumir" e sempre atribuir a si mesmo, e
+   * quem decide quem e "si mesmo" e o `auth.uid()` dentro da RPC. Aceitar um
+   * userId aqui transformaria "assumir" em "atribuir a qualquer um", que e
+   * outra operacao — e essa e a transferencia, com regra propria.
+   */
+  @Post(':id/assign')
+  @HttpCode(200)
+  assign(
+    @ActiveClinicId() clinicId: string,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(assignConversationSchema)) body: AssignConversationInput,
+  ): Promise<Conversation> {
+    return this.conversations.assign(clinicId, id, body.expectedVersion)
+  }
+
+  @Post(':id/transfer')
+  @HttpCode(200)
+  transfer(
+    @ActiveClinicId() clinicId: string,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(transferConversationSchema)) body: TransferConversationInput,
+  ): Promise<Conversation> {
+    return this.conversations.transfer(clinicId, id, body.expectedVersion, body.assigneeUserId)
+  }
+
+  @Post(':id/release')
+  @HttpCode(200)
+  release(
+    @ActiveClinicId() clinicId: string,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(releaseConversationSchema)) body: ReleaseConversationInput,
+  ): Promise<Conversation> {
+    return this.conversations.release(clinicId, id, body.expectedVersion)
+  }
+
+  @Patch(':id/status')
+  setStatus(
+    @ActiveClinicId() clinicId: string,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(setConversationStatusSchema)) body: SetConversationStatusInput,
+  ): Promise<Conversation> {
+    return this.conversations.setStatus(clinicId, id, body.expectedVersion, body.status)
+  }
+
+  @Post(':id/patient')
+  @HttpCode(200)
+  linkPatient(
+    @ActiveClinicId() clinicId: string,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(linkConversationPatientSchema))
+    body: LinkConversationPatientInput,
+  ): Promise<Conversation> {
+    return this.conversations.linkPatient(clinicId, id, body.expectedVersion, body.patientId)
+  }
+
+  /**
+   * Desvincular o paciente.
+   *
+   * A versao vem na QUERY, nao no corpo: corpo em DELETE nao atravessa proxies
+   * de forma confiavel, e a garantia de concorrencia nao pode depender de uma
+   * parte da requisicao que alguem no caminho pode descartar. Continua
+   * obrigatoria — so muda o transporte.
+   */
+  @Delete(':id/patient')
+  unlinkPatient(
+    @ActiveClinicId() clinicId: string,
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(unlinkConversationPatientSchema))
+    query: UnlinkConversationPatientInput,
+  ): Promise<Conversation> {
+    return this.conversations.unlinkPatient(clinicId, id, query.expectedVersion)
   }
 }

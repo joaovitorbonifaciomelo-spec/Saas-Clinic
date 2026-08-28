@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common'
 import {
+  CONVERSATION_CONFLICT_ERROR,
   CONVERSATION_EVENT_METADATA_KEYS,
   needsReply,
   toE164BR,
@@ -14,6 +16,7 @@ import {
   type RegisterConversationResult,
   type RegisterManualMessageInput,
   type RegisterManualMessageResult,
+  type ConversationConflictResponse,
   type ConversationDetail,
   type ConversationEventMetadata,
   type ConversationEventType,
@@ -593,6 +596,166 @@ export class ConversationsService {
     return {
       message: rpcToMessage(resultado.message!),
       conversation: toDetailBase(conversa as unknown as ConversationRow),
+    }
+  }
+
+  /* -------------------------------------------------------------------------
+     CONTROLE (Bloco 3)
+
+     A API NAO implementa concorrencia. Nao existe aqui um `select version`
+     seguido de `update`: essa sequencia tem uma janela entre a leitura e a
+     escrita, e e exatamente nela que duas atendentes assumem a mesma conversa.
+     Cada operacao e UMA chamada de RPC, e o filtro `version = expected` faz
+     parte do proprio UPDATE.
+
+     Todas as seis tem a mesma forma de resposta, entao ha um unico tradutor.
+  ------------------------------------------------------------------------- */
+
+  /** Assumir = atribuir a si mesmo. O usuario sai de auth.uid(), dentro da RPC. */
+  assign(clinicId: string, id: string, expectedVersion: number): Promise<Conversation> {
+    return this.control('conversation_assign', {
+      p_conversation_id: id,
+      p_expected_version: expectedVersion,
+    })
+  }
+
+  /**
+   * Transferir para outro membro.
+   *
+   * A elegibilidade do destinatario NAO e checada aqui: a FK composta
+   * (clinic_id, assigned_to) -> clinic_members ja torna impossivel apontar para
+   * alguem de fora da clinica. Duplicar a regra criaria dois lugares para ela
+   * divergir, e o daqui seria o que envelhece.
+   */
+  transfer(
+    clinicId: string,
+    id: string,
+    expectedVersion: number,
+    assigneeUserId: string,
+  ): Promise<Conversation> {
+    return this.control(
+      'conversation_transfer',
+      {
+        p_conversation_id: id,
+        p_expected_version: expectedVersion,
+        p_to_user_id: assigneeUserId,
+      },
+      // Nao dizemos se o UUID existe, se e de outro tenant ou se nao e elegivel:
+      // as tres respostas seriam informacao sobre uma conta que quem pergunta
+      // nao pode enxergar.
+      'Responsavel invalido para esta clinica.',
+    )
+  }
+
+  release(clinicId: string, id: string, expectedVersion: number): Promise<Conversation> {
+    return this.control('conversation_release', {
+      p_conversation_id: id,
+      p_expected_version: expectedVersion,
+    })
+  }
+
+  /**
+   * Mudar status.
+   *
+   * A maquina de estados vive no trigger `enforce_conversation_status_transition`
+   * e NAO e reimplementada aqui. O zod so recusa valores que nem existem no
+   * enum; qual transicao e permitida continua sendo decisao do banco, que
+   * responde com INVALID_STATUS_TRANSITION (22023) e vira 400.
+   */
+  setStatus(
+    clinicId: string,
+    id: string,
+    expectedVersion: number,
+    status: ConversationStatus,
+  ): Promise<Conversation> {
+    return this.control('conversation_set_status', {
+      p_conversation_id: id,
+      p_expected_version: expectedVersion,
+      p_status: status,
+    })
+  }
+
+  linkPatient(
+    clinicId: string,
+    id: string,
+    expectedVersion: number,
+    patientId: string,
+  ): Promise<Conversation> {
+    return this.control(
+      'conversation_link_patient',
+      {
+        p_conversation_id: id,
+        p_expected_version: expectedVersion,
+        p_patient_id: patientId,
+      },
+      'Paciente invalido para esta clinica.',
+    )
+  }
+
+  unlinkPatient(clinicId: string, id: string, expectedVersion: number): Promise<Conversation> {
+    return this.control('conversation_unlink_patient', {
+      p_conversation_id: id,
+      p_expected_version: expectedVersion,
+    })
+  }
+
+  /**
+   * Tradutor unico de outcome para HTTP.
+   *
+   *   ok        -> 200 com a conversa que a propria RPC devolveu
+   *   conflict  -> 409 com o estado atual
+   *   not_found -> 404, mesmo corpo para inexistente e de outro tenant
+   *
+   * UMA chamada por operacao. A RPC ja devolve a conversa atualizada, entao nao
+   * ha GET depois — e a sequencia "RPC, GET, GET" que o Bloco 3 precisava
+   * evitar.
+   *
+   * `conflict` cobre dois casos que o cliente ve igual, e esta certo que veja:
+   * a versao ficou velha, OU a pre-condicao da operacao nao vale mais (assumir
+   * algo que ja tem dono, liberar algo que ja esta na fila). Nos dois, alguem
+   * chegou antes, e a tela precisa do estado atual para se corrigir.
+   */
+  private async control(
+    fn: string,
+    args: Record<string, unknown>,
+    mensagemFk?: string,
+  ): Promise<Conversation> {
+    const { data, error } = await this.supabase.rpc(fn, args)
+
+    if (error) {
+      /*
+       * 23503 aqui so pode vir da FK do destinatario (transfer) ou do paciente
+       * (link). A mensagem generica e deliberada: distinguir "nao existe" de
+       * "e de outra clinica" ja seria revelar a existencia.
+       */
+      if (mensagemFk && error.code === '23503') {
+        throw new BadRequestException(mensagemFk)
+      }
+      throw mapPostgrestError(error)
+    }
+
+    const resultado = data as { outcome: string; conversation?: Conversation }
+
+    switch (resultado.outcome) {
+      case 'ok':
+        return resultado.conversation!
+      case 'conflict':
+        throw new ConflictException({
+          statusCode: 409,
+          error: CONVERSATION_CONFLICT_ERROR,
+          message: 'Este atendimento foi alterado por outra pessoa.',
+          conversation: resultado.conversation!,
+        } satisfies ConversationConflictResponse)
+      /*
+       * Inexistente, de outro tenant, ou vinculo perdido durante a corrida. O
+       * ultimo caso importa: `conversation_conflict` revalida o membership
+       * antes de devolver estado, entao quem acabou de perder o acesso recebe
+       * 404 e NAO um 409 com o conteudo da conversa.
+       */
+      case 'not_found':
+        throw new NotFoundException('Conversa nao encontrada.')
+      default:
+        throw new InternalServerErrorException('Erro ao processar a requisicao.')
     }
   }
 
