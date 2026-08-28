@@ -1182,6 +1182,421 @@ try {
     // Conversa livre, e a autoria historica preservada pelo snapshot.
     return rows[0].assigned_to === null && ev.rows[0].actor_name_snapshot !== null
   })
+
+  // ===========================================================================
+  console.log('\n  === 10. Pendencias: schema e invariantes ===\n')
+
+  /*
+   * A secao 9 removeu userA2 da clinica A de proposito, para provar que
+   * remover membership devolve a conversa a fila. Sem repor o vinculo aqui,
+   * TODOS os testes de concorrencia abaixo receberiam `not_found` em vez de
+   * `conflict` — e passariam a medir a coisa errada sem parecer quebrados.
+   */
+  await db.query(
+    `insert into public.clinic_members (clinic_id, user_id, role) values ($1,$2,'attendant')
+     on conflict (clinic_id, user_id) do nothing`,
+    [clinicA, userA2],
+  )
+
+  const novaTask = (userId, clinicId, args = {}) =>
+    comoUsuario(userId, async () => {
+      const { rows } = await db.query(
+        'select public.task_create($1,$2,$3,$4,$5,$6,$7,$8) as r',
+        [
+          clinicId,
+          args.title ?? 'Ligar para confirmar',
+          args.description ?? null,
+          args.dueAt ?? null,
+          args.assignee ?? null,
+          args.patientId ?? null,
+          args.conversationId ?? null,
+          args.appointmentId ?? null,
+        ],
+      )
+      return rows[0].r
+    })
+
+  await afirma('appointments ganhou a chave composta (pre-requisito da FK)', async () => {
+    const { rows } = await db.query(
+      "select 1 from pg_constraint where conname = 'appointments_clinic_id_id_key'",
+    )
+    return rows.length === 1
+  })
+
+  await afirma('pendencia GERAL, sem contexto nenhum, e aceita', async () => {
+    const r = await novaTask(userA, clinicA, { title: 'Revisar encaixes de amanha' })
+    return (
+      r.outcome === 'ok' &&
+      r.task.patientId === null &&
+      r.task.conversationId === null &&
+      r.task.appointmentId === null &&
+      r.task.status === 'open' &&
+      r.task.version === 1
+    )
+  })
+
+  await afirma('criar em clinica alheia devolve not_found, sem vazar', async () => {
+    const r = await novaTask(userA, clinicB, { title: 'Tarefa intrusa' })
+    return r.outcome === 'not_found' && r.task === undefined
+  })
+
+  await afirmaRecusa(
+    'FK composta recusa paciente de outra clinica MESMO como dono da tabela',
+    () =>
+      db.query(
+        'insert into public.tasks (clinic_id, title, patient_id) values ($1, $2, $3)',
+        [clinicA, 'Cross tenant', pacienteB],
+      ),
+    '23503',
+  )
+
+  await afirmaRecusa(
+    'authenticated nao tem INSERT direto em tasks',
+    () =>
+      comoUsuario(userA, () =>
+        db.query('insert into public.tasks (clinic_id, title) values ($1, $2)', [
+          clinicA,
+          'Insercao direta',
+        ]),
+      ),
+    '42501',
+  )
+
+  await afirmaRecusa(
+    'authenticated nao tem UPDATE direto em tasks',
+    () =>
+      comoUsuario(userA, () =>
+        db.query("update public.tasks set title = 'mexido' where clinic_id = $1", [clinicA]),
+      ),
+    '42501',
+  )
+
+  await afirmaRecusa(
+    'authenticated nao tem DELETE em tasks: cancelar, nunca apagar',
+    () => comoUsuario(userA, () => db.query('delete from public.tasks where clinic_id = $1', [clinicA])),
+    '42501',
+  )
+
+  await afirmaRecusa(
+    'authenticated nao insere evento: historico forjado e impossivel',
+    () =>
+      comoUsuario(userA, async () => {
+        const { rows } = await db.query('select id from public.tasks where clinic_id = $1 limit 1', [
+          clinicA,
+        ])
+        return db.query(
+          "insert into public.task_events (clinic_id, task_id, event_type) values ($1,$2,'completed')",
+          [clinicA, rows[0].id],
+        )
+      }),
+    '42501',
+  )
+
+  await afirmaRecusa(
+    'estado hibrido recusado: aberta com completed_at',
+    () =>
+      db.query(
+        "insert into public.tasks (clinic_id, title, status, completed_at) values ($1,'x','open',now())",
+        [clinicA],
+      ),
+    '23514',
+  )
+
+  await afirmaRecusa(
+    'estado hibrido recusado: concluida sem completed_at',
+    () =>
+      db.query(
+        "insert into public.tasks (clinic_id, title, status) values ($1,'x','completed')",
+        [clinicA],
+      ),
+    '23514',
+  )
+
+  // ---------------------------------------------------------------- ciclo
+  console.log('\n  === 11. Pendencias: ciclo de vida e concorrencia ===\n')
+
+  const chamarT = (userId, fn, args) =>
+    comoUsuario(userId, async () => {
+      const ph = args.map((_, i) => '$' + (i + 1)).join(', ')
+      const { rows } = await db.query('select public.' + fn + '(' + ph + ') as r', args)
+      return rows[0].r
+    })
+
+  await afirma('assumir com versao correta funciona e gera evento', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Assumir esta' })).task
+    const r = await chamarT(userA, 'task_assign', [t.id, t.version])
+    const { rows } = await db.query(
+      "select metadata from public.task_events where task_id = $1 and event_type = 'assigned'",
+      [t.id],
+    )
+    return (
+      r.outcome === 'ok' &&
+      r.task.assignedTo === userA &&
+      r.task.version === 2 &&
+      rows[0].metadata.to.userId === userA
+    )
+  })
+
+  await afirma('dois assumires simultaneos: um ok, um conflito', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Disputada' })).task
+    const primeiro = await chamarT(userA, 'task_assign', [t.id, t.version])
+    const segundo = await chamarT(userA2, 'task_assign', [t.id, t.version])
+    return primeiro.outcome === 'ok' && segundo.outcome === 'conflict'
+  })
+
+  await afirma('versao stale sempre conflita, e devolve o estado atual', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Stale' })).task
+    await chamarT(userA, 'task_set_due', [t.id, t.version, '2026-12-01T12:00:00Z'])
+    const r = await chamarT(userA, 'task_complete', [t.id, t.version])
+    return r.outcome === 'conflict' && r.task.version === 2
+  })
+
+  await afirma('concluir carimba instante e autor, e gera evento vazio', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Concluir' })).task
+    const r = await chamarT(userA, 'task_complete', [t.id, t.version])
+    const { rows } = await db.query(
+      "select metadata from public.task_events where task_id = $1 and event_type = 'completed'",
+      [t.id],
+    )
+    return (
+      r.outcome === 'ok' &&
+      r.task.status === 'completed' &&
+      r.task.completedAt !== null &&
+      r.task.completedBy === userA &&
+      Object.keys(rows[0].metadata).length === 0
+    )
+  })
+
+  await afirma('reabrir limpa os carimbos e PRESERVA o historico', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Reabrir' })).task
+    const c = await chamarT(userA, 'task_complete', [t.id, t.version])
+    const r = await chamarT(userA, 'task_reopen', [t.id, c.task.version])
+    const { rows } = await db.query(
+      "select event_type from public.task_events where task_id = $1 order by created_at, id",
+      [t.id],
+    )
+    const tipos = rows.map((x) => x.event_type)
+    return (
+      r.outcome === 'ok' &&
+      r.task.status === 'open' &&
+      r.task.completedAt === null &&
+      r.task.completedBy === null &&
+      // o fato de ter sido concluida NAO se perde: e o motivo de task_events existir
+      tipos.includes('completed') &&
+      tipos.includes('reopened')
+    )
+  })
+
+  await afirmaRecusa(
+    'atalho concluida -> cancelada e recusado: reabra primeiro',
+    async () => {
+      const t = (await novaTask(userA, clinicA, { title: 'Atalho' })).task
+      const c = await chamarT(userA, 'task_complete', [t.id, t.version])
+      await db.query(
+        "update public.tasks set status='cancelled', completed_at=null, completed_by=null, cancelled_at=now() where id=$1",
+        [t.id],
+      )
+      return c
+    },
+    'INVALID_TRANSITION',
+  )
+
+  await afirma('no-op nao gasta versao nem cria evento', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Sem prazo' })).task
+    const r = await chamarT(userA, 'task_set_due', [t.id, t.version, null])
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.task_events where task_id = $1 and event_type = 'due_changed'",
+      [t.id],
+    )
+    return r.outcome === 'ok' && r.task.version === 1 && rows[0].n === 0
+  })
+
+  await afirma('editar texto registra so os NOMES dos campos', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Titulo velho' })).task
+    const r = await chamarT(userA, 'task_update_details', [
+      t.id,
+      t.version,
+      'Titulo novo',
+      null,
+      false,
+    ])
+    const { rows } = await db.query(
+      "select metadata from public.task_events where task_id = $1 and event_type = 'details_changed'",
+      [t.id],
+    )
+    return (
+      r.outcome === 'ok' &&
+      r.task.title === 'Titulo novo' &&
+      JSON.stringify(rows[0].metadata) === JSON.stringify({ fields: ['title'] })
+    )
+  })
+
+  await afirmaRecusa(
+    'metadata de details_changed com texto antigo/novo e recusada',
+    () =>
+      db.query(
+        "insert into public.task_events (clinic_id, task_id, event_type, metadata) " +
+          "select $1, id, 'details_changed', '{\"fields\":[\"title\"],\"old\":\"x\"}'::jsonb " +
+          'from public.tasks where clinic_id = $1 limit 1',
+        [clinicA],
+      ),
+    '23514',
+  )
+
+  // ------------------------------------------------------- contexto imutavel
+  console.log('\n  === 12. Pendencias: contexto e autoria ===\n')
+
+  await afirma('coerencia recusa paciente diferente do da conversa', async () => {
+    const conv = await novaConversa(userA, clinicA)
+    await chamarT(userA, 'conversation_link_patient', [conv.id, conv.version, pacienteA])
+    const outro = await inserirPaciente(userA, clinicA, 'Outro Paciente')
+    const r = await novaTask(userA, clinicA, {
+      title: 'Incoerente',
+      conversationId: conv.id,
+      patientId: outro,
+    })
+    return r.outcome === 'patient_mismatch' && r.task === undefined
+  })
+
+  await afirma('conversa SEM paciente aceita qualquer paciente na tarefa', async () => {
+    const conv = await novaConversa(userA, clinicA)
+    const r = await novaTask(userA, clinicA, {
+      title: 'Coerente',
+      conversationId: conv.id,
+      patientId: pacienteA,
+    })
+    return r.outcome === 'ok'
+  })
+
+  const alvoImutavel = await novaTask(userA, clinicA, {
+    title: 'Contexto fixo',
+    patientId: pacienteA,
+  })
+  const outroPaciente = await inserirPaciente(userA, clinicA, 'Paciente Trocado')
+
+  await afirmaRecusa(
+    'trocar o paciente depois e recusado: reescreveria a historia',
+    () =>
+      db.query('update public.tasks set patient_id = $1 where id = $2', [
+        outroPaciente,
+        alvoImutavel.task.id,
+      ]),
+    'CONTEXT_IMMUTABLE',
+  )
+
+  await afirmaRecusa(
+    'acrescentar contexto depois tambem e recusado',
+    async () => {
+      const t = (await novaTask(userA, clinicA, { title: 'Nasceu geral' })).task
+      return db.query('update public.tasks set patient_id = $1 where id = $2', [pacienteA, t.id])
+    },
+    'CONTEXT_IMMUTABLE',
+  )
+
+  await afirma('apagar paciente NAO bloqueia e NAO apaga a tarefa', async () => {
+    const p = await inserirPaciente(userA, clinicA, 'Paciente Efemero')
+    const t = (await novaTask(userA, clinicA, { title: 'Do efemero', patientId: p })).task
+    // Se a imutabilidade de contexto fosse cega, este delete falharia.
+    await db.query('delete from public.patients where id = $1', [p])
+    const { rows } = await db.query(
+      'select patient_id, status, version from public.tasks where id = $1',
+      [t.id],
+    )
+    // SET NULL seletivo: some o vinculo, sobrevive a tarefa. E NAO bumpa versao —
+    // ninguem editou a tarefa, e um 409 aqui puniria quem nao fez nada.
+    return rows.length === 1 && rows[0].patient_id === null && rows[0].version === 1
+  })
+
+  await afirma('remover membership devolve a tarefa a fila sem bloquear', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Do a2' })).task
+    await chamarT(userA2, 'task_assign', [t.id, t.version])
+    await db.query('delete from public.clinic_members where clinic_id = $1 and user_id = $2', [
+      clinicA,
+      userA2,
+    ])
+    const { rows } = await db.query('select assigned_to from public.tasks where id = $1', [t.id])
+    const ev = await db.query(
+      "select actor_name_snapshot from public.task_events where task_id = $1 and event_type = 'assigned'",
+      [t.id],
+    )
+    await db.query(
+      "insert into public.clinic_members (clinic_id, user_id, role) values ($1,$2,'attendant')",
+      [clinicA, userA2],
+    )
+    return rows[0].assigned_to === null && ev.rows[0].actor_name_snapshot !== null
+  })
+
+  await afirma('APAGAR A CONTA de quem concluiu nao viola CHECK nem bloqueia', async () => {
+    const { rows: u } = await db.query(
+      "insert into auth.users (email, raw_user_meta_data) values ('conclui@example.test', '{\"full_name\":\"Quem Concluiu\"}') returning id",
+    )
+    const efemero = u[0].id
+    await db.query(
+      "insert into public.clinic_members (clinic_id, user_id, role) values ($1,$2,'attendant')",
+      [clinicA, efemero],
+    )
+    const t = (await novaTask(userA, clinicA, { title: 'Concluida por quem sai' })).task
+    await chamarT(efemero, 'task_complete', [t.id, t.version])
+
+    // O TESTE: se o CHECK exigisse completed_by NOT NULL, este delete falharia
+    // com violacao de constraint, e autoria historica passaria a bloquear a
+    // remocao de uma pessoa.
+    await db.query('delete from auth.users where id = $1', [efemero])
+
+    const { rows } = await db.query(
+      'select status, completed_at, completed_by from public.tasks where id = $1',
+      [t.id],
+    )
+    const ev = await db.query(
+      "select actor_name_snapshot from public.task_events where task_id = $1 and event_type = 'completed'",
+      [t.id],
+    )
+    return (
+      rows[0].status === 'completed' &&
+      rows[0].completed_at !== null &&
+      rows[0].completed_by === null &&
+      // o nome sobrevive no snapshot, que e onde ele deve estar
+      ev.rows[0].actor_name_snapshot === 'Quem Concluiu'
+    )
+  })
+
+  await afirma('conflito nao devolve estado para quem perdeu a membership', async () => {
+    const { rows: u } = await db.query(
+      "insert into auth.users (email) values ('exmembro@example.test') returning id",
+    )
+    const ex = u[0].id
+    await db.query(
+      "insert into public.clinic_members (clinic_id, user_id, role) values ($1,$2,'attendant')",
+      [clinicA, ex],
+    )
+    const t = (await novaTask(userA, clinicA, { title: 'Vazamento?' })).task
+    await chamarT(userA, 'task_assign', [t.id, t.version])
+    await db.query('delete from public.clinic_members where clinic_id = $1 and user_id = $2', [
+      clinicA,
+      ex,
+    ])
+    const r = await chamarT(ex, 'task_assign', [t.id, t.version])
+    return r.outcome === 'not_found' && r.task === undefined
+  })
+
+  await afirma('A nao enxerga as pendencias de B', async () => {
+    await novaTask(userB, clinicB, { title: 'Coisa da B' })
+    const n = await comoUsuario(userA, async () => {
+      const { rows } = await db.query(
+        'select count(*)::int as n from public.tasks where clinic_id = $1',
+        [clinicB],
+      )
+      return rows[0].n
+    })
+    return n === 0
+  })
+
+  await afirma('transferir para nao-membro devolve not_found', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Transferir' })).task
+    const r = await chamarT(userA, 'task_transfer', [t.id, t.version, userB])
+    return r.outcome === 'not_found'
+  })
+
 } catch (e) {
   falhou('execucao', e.message)
 } finally {
