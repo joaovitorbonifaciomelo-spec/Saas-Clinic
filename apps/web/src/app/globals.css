@@ -3536,9 +3536,9 @@ th.num {
   .at-shell[data-area='fila'] .at-item.is-selected {
     background: transparent;
     box-shadow: none;
-  }
-  .at-shell[data-area='fila'] .at-item.is-selected::before {
-    display: none;
+    /* A barra lateral vem de border-left-color em .master-item.is-selected —
+       o realce inteiro precisa sumir, nao so o fundo. */
+    border-left-color: transparent;
   }
 }
 
