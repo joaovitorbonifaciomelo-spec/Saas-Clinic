@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs'
 import { connect as tlsConnect } from 'node:tls'
 import { lookup } from 'node:dns/promises'
 import { Socket } from 'node:net'
+import { setTimeout as esperar } from 'node:timers/promises'
 config({ path: 'D:/Projeto Piloto Clinicas/.env.test' })
 
 const HOST = 'srv1779541.taild2349f.ts.net'
@@ -138,7 +139,7 @@ for (const n of [1, 2, 5, 10]) {
   for (let rodada = 0; rodada < 3; rodada += 1) {
     const lote = Array.from({ length: n }, (_, i) => medir(CAMINHOS[i % CAMINHOS.length]))
     todas.push(...(await Promise.all(lote)))
-    await new Promise((r) => setTimeout(r, 500))
+    await esperar(500)
   }
   const s = resumo(todas)
   console.log(

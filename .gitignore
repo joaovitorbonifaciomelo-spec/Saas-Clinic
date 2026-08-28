@@ -33,3 +33,6 @@ perf-*.json
 
 # Scripts descartaveis de medicao/captura, criados por rodada e apagados depois.
 scripts/.tmp-*
+
+# Fixtures e manifestos de diagnostico (contem credencial de conta sintetica).
+.diag/
