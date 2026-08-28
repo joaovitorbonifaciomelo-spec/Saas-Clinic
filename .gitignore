@@ -27,4 +27,9 @@ Thumbs.db
 shots/
 shots-public/
 shots-r2/
+.shots/
+.shots-local/
 perf-*.json
+
+# Scripts descartaveis de medicao/captura, criados por rodada e apagados depois.
+scripts/.tmp-*
