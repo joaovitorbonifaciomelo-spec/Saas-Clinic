@@ -914,3 +914,129 @@ cookie, cookie correto, ausência de cookie, cinco formatos inválidos, cookie
 apontando para a clínica de outro usuário, clínica inexistente, nome da clínica
 no shell vindo do validado e não do cookie, e sessão expirada ainda indo para
 `/login`.
+
+---
+
+## 13. Incidente: senha de fixture commitada durante o diagnóstico
+
+Registrado aqui porque o valor de um incidente está no que ele ensina, e o que
+ele ensinou não estava em nenhuma das quatro regras de segredo existentes.
+
+### O que aconteceu
+
+A rodada de diagnóstico do caminho Vercel → Funnel criou uma conta sintética no
+projeto de **desenvolvimento** para exercitar o fluxo autenticado ponta a ponta.
+O instrumento gravava um manifesto em `.diag/manifesto.json` com os IDs criados
+— para poder apagar exatamente aqueles recursos depois, e não por padrão de
+nome. O manifesto guardava também a senha da conta, porque o próprio
+instrumento precisava logar de novo entre as fases.
+
+Um `git add -A` levou esse arquivo junto no commit `7ae9627`. Ele foi removido
+em `fb89da5`, mas removido não é o mesmo que nunca ter existido: o valor
+permanece nos objetos daqueles dois commits.
+
+### Extensão real, verificada e não presumida
+
+| Pergunta | Resposta |
+|---|---|
+| A senha era reutilizada? | Não. Casava com `^Senha-Diag-[0-9a-f]{8}!$`, derivada do `runId` daquela execução — gerada, usada uma vez, nunca digitada por pessoa nem repetida em outro lugar. |
+| Havia `service_role`, DB URL ou anon key no manifesto? | Não. Só IDs e a senha da conta sintética. |
+| Havia dado de paciente? | Não. Tudo sintético. |
+| A conta ainda existe? | Não. Apagada. O projeto Dev tem hoje **um** usuário: a conta real do operador. Zero contas `diag-*`. |
+| Algum arquivo rastreado ainda contém o valor? | Não. |
+| Atingiu piloto ou produção? | Não. O diagnóstico inteiro rodou contra o projeto de desenvolvimento. |
+
+`.diag/` passou a ser ignorado (`.gitignore:38`). O diff líquido do diagnóstico
+contra o commit anterior é **apenas o `.gitignore`** — o instrumento não deixou
+rastro em código de aplicação.
+
+### O histórico não foi reescrito, e isso é uma decisão
+
+Purgar o histórico reescreveria SHAs de commits já publicados. O ganho seria
+apagar uma senha de uso único, de uma conta que não existe mais, de um projeto
+de desenvolvimento. Não compensa o custo. **Se o repositório tornar-se público
+ou receber colaboradores externos, essa conta já não existe — mas a decisão
+deve ser reavaliada nesse momento**, não presumida como permanente.
+
+### A correção: regra 5 do `check:secrets`
+
+As quatro regras existentes procuravam `service_role`, `SUPABASE_DB_URL`,
+prefixo `NEXT_PUBLIC_` e arquivos `.env` rastreados. Nenhuma delas olhava para
+"senha em manifesto de fixture" — a categoria que efetivamente vazou.
+
+A regra 5 lê **apenas JSON rastreado pelo git**, procura **apenas nomes de
+chave inequivocamente credenciais** (`senha`, `password`, `accessToken`,
+`access_token`, `refreshToken`, `refresh_token`, `serviceRoleKey`,
+`service_role_key`), e só reclama quando o valor é texto não vazio. Percorre
+objetos e arrays aninhados, porque o próximo manifesto pode aninhar o que este
+deixou no topo.
+
+Duas escolhas de escopo, ambas deliberadas:
+
+- **`token` sozinho não entra na lista.** É nome de campo de token CSRF, de
+  design token, de tokenizador. Um detector que grita à toa é um detector que a
+  equipe aprende a ignorar, e aí ele deixa de proteger contra o caso real.
+- **A falha reporta o caminho da chave, nunca o valor.** Um verificador de
+  segredos que imprime o segredo no log de CI apenas troca o lugar do
+  vazamento.
+
+Verificada por mutação: recriando um manifesto com a mesma forma do que vazou,
+a checagem falha com `contas.0.senha` e sai com código 1; sem ele, passa.
+
+---
+
+## 14. Caminho público da API: por que sair do Tailscale Funnel
+
+### O sintoma e a causa provada
+
+Toda página autenticada respondia 500 em produção. A causa não era a Agenda, nem
+a sessão, nem o Supabase: `getaddrinfo ENOTFOUND srv1779541.taild2349f.ts.net`
+a partir das funções da Vercel na região `iad1`, falhando em 2–55 ms — rápido
+demais para ser timeout de rede, que é a assinatura de falha de resolução.
+
+Os controles descartam as explicações alternativas, um a um:
+
+| Controle | Resultado | Descarta |
+|---|---|---|
+| `example.com` | 200 em 23 ms | "a função não tem saída de rede" |
+| `tailscale.com` | 200 em 84 ms | "a Vercel bloqueia a Tailscale" |
+| apex do tailnet `taild2349f.ts.net` | ENOTFOUND | "é o subdomínio específico" |
+| IP literal | ECONNRESET no TLS, 20 ms | "o caminho de rede está fechado" — não está |
+| DoH de **dentro da mesma função** | resolve normalmente | "o nome não existe" — existe |
+| Resolvedores públicos (Google, Cloudflare, Quad9, OpenDNS) | todos resolvem, TTL 300 s | "a zona está quebrada" |
+| Concorrência 1/2/5/10 | idêntico local e na Vercel | "é limite de conexões" |
+
+O nome é resolvível pelo mundo e não pelo resolvedor da Vercel. Isso é
+infraestrutura de terceiro que não está sob nosso controle e para a qual não
+existe correção do nosso lado — só contorno.
+
+### Por que a falha derrubava a página inteira
+
+`requireActiveSession()` chama `fetchMe()`, que chama `apiFetch`, que é `fetch`
+sem timeout. Falha de rede lança `TypeError`, não `ApiError`; o `catch` trata
+apenas `ApiError` 401 e **relança o resto de propósito**. Esse comportamento
+está correto e não foi alterado: mascarar indisponibilidade da API devolvendo
+agenda vazia transformaria um incidente visível em dado errado silencioso, que
+é o modo de falha pior.
+
+### A decisão
+
+Publicar a API pelo Fly.io, região `gru`, com a **mesma imagem** que já roda na
+VPS, fixada por SHA. `fly.toml` está versionado na raiz e não contém segredo
+algum: `SUPABASE_URL` e `SUPABASE_ANON_KEY` entram por `fly secrets set`, e
+`service_role` e senha do banco continuam não existindo no runtime da API.
+
+Sem `auto_stop_machines`: cold start de máquina suspensa aparece na recepção da
+clínica como "o sistema travou".
+
+### Rollback
+
+A migração é paralela. A VPS e o Funnel continuam de pé, intocados. O valor
+anterior de `API_URL`, registrado antes de qualquer troca:
+
+```
+https://srv1779541.taild2349f.ts.net
+```
+
+Se o Fly falhar depois da troca, reverte-se **somente a variável de ambiente da
+Vercel** para esse valor. Nada na VPS é modificado.
