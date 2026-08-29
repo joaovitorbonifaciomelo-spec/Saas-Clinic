@@ -34,9 +34,31 @@ export default defineConfig({
             'tests/clinic-hint.test.ts',
             'tests/atendimento-*.test.ts',
             'tests/agenda-mes.test.ts',
+            // Pendencias tem projeto proprio (`pnpm test:tasks`). Sem esta
+            // linha as suites rodam DUAS vezes: o include desta secao e
+            // `tests/**`, entao todo arquivo novo entra aqui por padrao.
+            'tests/tasks-*.test.ts',
           ],
           testTimeout: 60_000,
           hookTimeout: 120_000,
+          fileParallelism: false,
+          env: { NODE_ENV: 'test' },
+          setupFiles: ['./tests/setup-env.ts'],
+        },
+      },
+      {
+        /*
+         * Pendencias contra o banco REAL. Depende das quatro migrations de
+         * tasks aplicadas no Dev, entao fica fora de `pnpm test` e roda em
+         * `pnpm test:tasks`.
+         */
+        test: {
+          name: 'tasks',
+          root: './supabase',
+          environment: 'node',
+          include: ['tests/tasks-*.test.ts'],
+          testTimeout: 120_000,
+          hookTimeout: 180_000,
           fileParallelism: false,
           env: { NODE_ENV: 'test' },
           setupFiles: ['./tests/setup-env.ts'],

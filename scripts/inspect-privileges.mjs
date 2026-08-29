@@ -324,6 +324,11 @@ const EXPECTED_POLICIES_BY_TABLE = {
   conversations: 1,
   messages: 1,
   conversation_events: 1,
+  // Pendencias: UMA policy em cada, so de SELECT. A ausencia de policy de
+  // INSERT/UPDATE/DELETE e a defesa, e o numero exato e o que a denuncia se
+  // alguem acrescentar uma permissiva.
+  tasks: 1,
+  task_events: 1,
 }
 
 console.log('')

@@ -1064,3 +1064,56 @@ O caminho limpo é `flyctl auth login` no terminal do operador: o flyctl grava a
 credencial no próprio `~/.fly/config.yml`, fora do repositório, e as invocações
 seguintes a leem sozinhas. Sem variável de ambiente, sem token em arquivo
 versionado, sem token impresso em log.
+
+---
+
+## 15. Dívida técnica: como o contexto de Pendências distingue FK de UPDATE
+
+Registrado aqui porque é uma decisão que funciona hoje e que **precisa ser
+reavaliada quando uma condição específica mudar** — e condição que só vive na
+cabeça de alguém não sobrevive a seis meses.
+
+### O problema
+
+`tasks.patient_id`, `conversation_id` e `appointment_id` são **imutáveis**:
+contexto responde "sobre o que esta ação nasceu", e reescrevê-lo depois mudaria
+o significado histórico da pendência.
+
+Mas as três colunas têm `on delete set null (coluna)`. Ações referenciais no
+PostgreSQL são executadas por triggers internos que fazem **UPDATE** na tabela
+referenciante, e esse UPDATE dispara os triggers de usuário. Uma imutabilidade
+cega faria `delete from patients` falhar com `CONTEXT_IMMUTABLE` — a regra de
+histórico viraria trava contra apagar dado pessoal.
+
+Permitir `valor → nulo` para qualquer origem resolveria isso e abriria outra
+porta: qualquer UPDATE privilegiado poderia zerar contextos parecendo ação de
+FK.
+
+### A solução, e o seu limite
+
+`enforce_task_context_immutable` aceita `valor → nulo` **apenas quando
+`pg_trigger_depth() >= 2`**. Medido contra o PostgreSQL antes de ser adotado:
+
+| origem do UPDATE | `pg_trigger_depth()` |
+|---|---|
+| direto (RPC, `service_role`, dono da tabela) | 1 |
+| ação referencial `ON DELETE SET NULL` | 2 |
+
+> **O limite, dito com clareza: a checagem prova "estou aninhado dentro de outro
+> trigger", não "sou exatamente uma ação de integridade referencial".**
+
+### Quando isto precisa ser reavaliado
+
+**Se algum dia um trigger passar a atualizar `tasks` a partir de outra tabela**,
+esse caminho herdará a permissão de anular contexto sem ser uma FK. Hoje não
+existe nenhum: os dois únicos caminhos de escrita são as RPCs (profundidade 1) e
+as ações referenciais.
+
+O que segura a regra enquanto isso: `authenticated` não tem UPDATE em `tasks`,
+então esta não é a primeira linha de defesa — ela protege contra `service_role`
+e contra o dono da tabela, que passam por cima do RLS.
+
+Dois testes guardam os dois lados, e quebram juntos se a distinção parar de
+funcionar: *"ZERAR o contexto por escrita privilegiada é recusado"* e *"apagar o
+paciente NÃO bloqueia"* (`supabase/tests/tasks-contexto.test.ts`), mais os
+equivalentes no harness PGlite.
