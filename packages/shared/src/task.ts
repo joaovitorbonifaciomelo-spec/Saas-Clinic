@@ -484,15 +484,156 @@ export const TASK_INVALID_REASON_LABELS: Record<TaskInvalidReason, string> = {
   invalid_transition: 'Reabra a pendência antes de mudar para este estado.',
 }
 
+/* =============================================================================
+   Consulta da lista
+   ========================================================================== */
+
 /**
- * `overdue` NAO vem calculado no cliente.
- *
- * Comparar `dueAt` com o relogio do navegador faz um computador com hora errada
- * mostrar uma fila diferente da real, e o corte de dia depende do fuso da
- * CLINICA, que o navegador nao conhece. O servidor classifica; a tela exibe.
+ * Recorte temporal. NAO e status persistido — e uma pergunta feita ao relogio
+ * da clinica no momento da consulta.
  */
-export interface TaskListItem extends Task {
-  isOverdue: boolean
-  assigneeName: string | null
-  patientName: string | null
+export const TASK_DUE_FILTERS = ['any', 'overdue', 'today', 'upcoming', 'none'] as const
+export const taskDueFilterSchema = z.enum(TASK_DUE_FILTERS)
+export type TaskDueFilter = z.infer<typeof taskDueFilterSchema>
+
+export const TASK_ASSIGNMENT_FILTERS = ['any', 'mine', 'unassigned'] as const
+export const taskAssignmentFilterSchema = z.enum(TASK_ASSIGNMENT_FILTERS)
+export type TaskAssignmentFilter = z.infer<typeof taskAssignmentFilterSchema>
+
+export const TASK_PAGE_LIMIT_DEFAULT = 50
+export const TASK_PAGE_LIMIT_MAX = 100
+
+/**
+ * Filtros da lista, com as combinacoes sem sentido recusadas na borda.
+ *
+ * Aceitar uma combinacao incoerente e devolver 200 e pior do que recusar: a
+ * tela pareceria funcionar, e quem escreveu a chamada so descobriria o
+ * engano quando alguem reclamasse de uma lista vazia sem motivo.
+ */
+export const listTasksQuerySchema = z
+  .object({
+    status: taskStatusSchema.default('open'),
+    due: taskDueFilterSchema.default('any'),
+    assignment: taskAssignmentFilterSchema.default('any'),
+    /** Filtro explicito por responsavel. Precisa ser membro da clinica ativa. */
+    assigneeId: z.uuid().optional(),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(TASK_PAGE_LIMIT_MAX)
+      .default(TASK_PAGE_LIMIT_DEFAULT),
+    cursor: z.string().optional(),
+  })
+  .strict()
+  .superRefine((q, ctx) => {
+    /*
+     * Os recortes de prazo descrevem trabalho A FAZER. "Concluidas de hoje" nao
+     * e a mesma pergunta que "concluidas cujo prazo era hoje", e a segunda nao
+     * interessa a ninguem — responder qualquer uma das duas em silencio faria a
+     * aba mentir sobre o que esta contando.
+     */
+    if (q.due !== 'any' && q.status !== 'open') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['due'],
+        message: 'O recorte de prazo so se aplica a pendencias abertas (status=open).',
+      })
+    }
+    if (q.assigneeId !== undefined && q.assignment !== 'any') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['assigneeId'],
+        message: 'assigneeId nao pode ser combinado com assignment=mine ou unassigned.',
+      })
+    }
+  })
+
+export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>
+
+/* =============================================================================
+   Read models
+   ========================================================================== */
+
+/** Nome ATUAL, do diretorio seguro. Historico vive em `task_events`. */
+export interface TaskAssigneeSummary {
+  userId: string
+  displayName: string | null
+}
+
+export interface TaskPatientSummary {
+  id: string
+  name: string
+  phone: string
+}
+
+/** O suficiente para orientar quem abre a pendencia. Sem mensagens. */
+export interface TaskConversationSummary {
+  id: string
+  status: string
+  contactName: string | null
+  contactPhoneE164: string | null
+}
+
+/** O suficiente para situar no tempo. Sem carregar a agenda. */
+export interface TaskAppointmentSummary {
+  id: string
+  startsAt: string
+  status: string
+  professionalName: string | null
+}
+
+/**
+ * Item da lista.
+ *
+ * `description` fica de fora de proposito: a lista serve para RECONHECER e
+ * operar a pendencia, e o detalhe ja devolve o texto. Trazer 2000 caracteres
+ * por linha, cinquenta vezes, pagaria banda por algo que ninguem le na lista.
+ */
+export interface TaskListItem {
+  id: string
+  title: string
+  status: TaskStatus
+  dueAt: string | null
+  /**
+   * `due_at < agora`. NAO e a aba "Atrasadas".
+   *
+   * A aba usa `due_at < inicio de hoje` para que Atrasadas, Hoje, Proximas e
+   * Sem prazo formem uma particao. Este campo e outra coisa: serve para marcar
+   * visualmente uma pendencia de hoje cujo horario ja passou — ela continua na
+   * aba Hoje, e e a tela que decide se destaca.
+   */
+  isPastDue: boolean
+  assignedTo: string | null
+  assignee: TaskAssigneeSummary | null
+  isMine: boolean
+  patientId: string | null
+  patient: TaskPatientSummary | null
+  /** Presenca do contexto, sem carregar o resumo: a lista nao precisa dele. */
+  conversationId: string | null
+  appointmentId: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** Detalhe: os campos operacionais completos, mais o contexto resolvido. */
+export interface TaskDetail extends Task {
+  isPastDue: boolean
+  assignee: TaskAssigneeSummary | null
+  isMine: boolean
+  patient: TaskPatientSummary | null
+  conversation: TaskConversationSummary | null
+  appointment: TaskAppointmentSummary | null
+}
+
+/** Evento como a API o devolve: metadata ja validada pelo tipo. */
+export interface TaskEventView {
+  id: string
+  eventType: TaskEventType
+  actorUserId: string | null
+  actorNameSnapshot: string | null
+  actorRoleSnapshot: ClinicRole | null
+  metadata: Record<string, unknown>
+  createdAt: string
 }

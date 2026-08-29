@@ -8,6 +8,7 @@ import { ProfessionalsModule } from './professionals/professionals.module'
 import { ServicesModule } from './services/services.module'
 import { AppointmentsModule } from './appointments/appointments.module'
 import { ConversationsModule } from './conversations/conversations.module'
+import { TasksModule } from './tasks/tasks.module'
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { ConversationsModule } from './conversations/conversations.module'
     ServicesModule,
     AppointmentsModule,
     ConversationsModule,
+    TasksModule,
   ],
   controllers: [HealthController],
 })
