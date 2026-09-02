@@ -5,7 +5,7 @@
  * O que estas asserções protegem: se o cliente conseguisse inserir um evento,
  * ou escolher o ator, o historico deixaria de ser auditoria e viraria alegacao.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import {
   assumir,
   cancelar,
@@ -19,6 +19,7 @@ import {
   reabrir,
   transferir,
   type Cenario,
+  registrarLimpeza,
 } from './task-helpers'
 
 let c: Cenario
@@ -27,9 +28,7 @@ beforeAll(async () => {
   c = await montarCenario()
 }, 120_000)
 
-afterAll(async () => {
-  await c?.registry.cleanup(c.admin)
-}, 120_000)
+registrarLimpeza(() => c)
 
 describe('um evento por operacao', () => {
   it('criacao gera created, e apenas ele', async () => {

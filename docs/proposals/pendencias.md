@@ -191,7 +191,7 @@ sinal de "Atrasadas", que é o mais valioso da tela.
 
 | Recorte | Derivação |
 |---|---|
-| Atrasadas | `status = 'open' and due_at < agora` |
+| Atrasadas | `status = 'open' and due_at < início do dia local` |
 | Hoje | `status = 'open'` e `due_at` dentro do dia local da clínica |
 | Próximas | `status = 'open' and due_at >` fim do dia local |
 | Sem prazo | `status = 'open' and due_at is null` |
@@ -201,6 +201,36 @@ sinal de "Atrasadas", que é o mais valioso da tela.
 
 **Todos os cortes de dia usam `clinics.timezone`**, nunca o relógio do servidor
 nem o do navegador. Ver R3 e R4.
+
+### 6.1 Duas perguntas diferentes sobre atraso · leia antes de implementar
+
+O produto tem **dois** conceitos de "atrasada", ambos legítimos, e confundi-los
+foi a contradição que a primeira versão deste documento carregava.
+
+| | `isPastDueNow` | recorte `due=overdue` |
+|---|---|---|
+| Pergunta | *o horário desta pendência já passou neste instante?* | *esta pendência pertence a um dia anterior ao dia local de hoje?* |
+| Fórmula | `due_at < agora` | `due_at < início de hoje no fuso da clínica` |
+| Onde vive | campo de cada item do read model | filtro da aba |
+| Para que serve | destacar visualmente uma pendência de hoje cujo horário venceu | montar a aba **Atrasadas** |
+
+O exemplo que separa os dois: uma pendência para **hoje às 09h**, consultada às
+**10h**, tem
+
+```
+due=today       -> aparece na aba Hoje
+isPastDueNow    -> true
+due=overdue     -> NAO aparece
+```
+
+**"Hoje" é o dia local inteiro**, mesmo que o horário já tenha passado. É por
+isso que as quatro abas continuam sendo uma partição: se *Atrasadas* usasse
+`due_at < agora`, essa mesma pendência estaria em duas abas ao mesmo tempo, e a
+soma dos contadores passaria a ser maior que o total de pendências abertas.
+
+Nenhuma tela deve calcular qualquer um dos dois no navegador: o corte depende do
+fuso da clínica, que o navegador não conhece, e do relógio do servidor, que é o
+único confiável. Ver R3 e R4.
 
 > **Propriedade que vale registrar: nenhuma pendência aberta pode ficar
 > invisível.** *Atrasadas*, *Hoje*, *Próximas* e *Sem prazo* formam uma partição
@@ -540,9 +570,9 @@ Um campo em branco lê-se como dado faltando; um rótulo lê-se como decisão.
 
 **Nenhuma visão é redundante:**
 
-- **Atrasadas** e **Hoje** são disjuntas por construção (`due_at < agora` vs.
-  restante do dia). Separadas porque exigem reações diferentes: atrasada é
-  dívida, hoje é plano.
+- **Atrasadas** e **Hoje** são disjuntas por construção — a fronteira das duas
+  é a **meia-noite local**, não o instante atual. Separadas porque exigem
+  reações diferentes: atrasada é dívida, hoje é plano. Ver §6.1.
 - **Sem prazo** não aparece em nenhuma das outras. Se virasse aba escondida, o
   módulo recriaria o problema que veio resolver. **O contador aparece mesmo
   quando zero.**

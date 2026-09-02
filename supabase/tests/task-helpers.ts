@@ -6,6 +6,7 @@
  * usuario, que e exatamente o caminho que a API vai usar depois. O que estes
  * testes exercitam e o mesmo RLS e o mesmo controle de concorrencia.
  */
+import { afterAll, afterEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   createActor,
@@ -22,6 +23,8 @@ export const UUID_INEXISTENTE = '00000000-0000-4000-8000-000000000000'
 export interface Colega {
   userId: string
   email: string
+  /** JWT do colega: os testes de API precisam dos DOIS lados de cada corrida. */
+  accessToken: string
   db: SupabaseClient
 }
 
@@ -73,10 +76,10 @@ export async function adicionarMembro(
   if (erroVinculo) throw new Error(`vincular ${rotulo}: ${erroVinculo.message}`)
 
   const db = createAnonClient(env)
-  const { error: erroLogin } = await db.auth.signInWithPassword({ email, password })
-  if (erroLogin) throw new Error(`logar ${rotulo}: ${erroLogin.message}`)
+  const { data: sessao, error: erroLogin } = await db.auth.signInWithPassword({ email, password })
+  if (erroLogin || !sessao.session) throw new Error(`logar ${rotulo}: ${erroLogin?.message}`)
 
-  return { userId: criado.user.id, email, db }
+  return { userId: criado.user.id, email, accessToken: sessao.session.access_token, db }
 }
 
 export async function montarCenario(): Promise<Cenario> {
@@ -241,4 +244,35 @@ export async function lerTask(admin: SupabaseClient, taskId: string) {
   const { data, error } = await admin.from('tasks').select('*').eq('id', taskId).maybeSingle()
   if (error) throw new Error(`ler task: ${error.message}`)
   return data as (Record<string, unknown> & { version: number }) | null
+}
+
+/* =============================================================================
+   Encerramento da suite
+   ========================================================================== */
+
+/**
+ * Registra a limpeza do cenario e decide o destino do manifesto.
+ *
+ * A suite chama isto no topo, e nao escreve `afterAll` proprio. Duas razoes:
+ * a decisao sobre o manifesto fica num lugar so, e a deteccao de falha usa
+ * `afterEach`, cujo contexto (`{ task }`) e API publica e estavel — o `suite`
+ * como argumento de `afterAll` mudou de posicao entre versoes do vitest e
+ * quebrou silenciosamente ao ser usado assim.
+ *
+ * Falha em qualquer teste marca o estado como INCERTO: um teste que quebrou no
+ * meio pode ter criado recurso fora do registry, e ai o manifesto e o unico
+ * ponto de partida para achar o que sobrou.
+ */
+export function registrarLimpeza(obterCenario: () => Cenario | undefined): void {
+  let algumaFalhou = false
+
+  afterEach(({ task }) => {
+    if (task.result?.state === 'fail') algumaFalhou = true
+  })
+
+  afterAll(async () => {
+    const cenario = obterCenario()
+    if (!cenario) return
+    await cenario.registry.cleanup(cenario.admin, { estadoIncerto: algumaFalhou })
+  }, 120_000)
 }

@@ -130,27 +130,35 @@ describe('criacao', () => {
 
 describe('operacoes de controle', () => {
   it('exigem expectedVersion, sem default', () => {
-    for (const schema of [assignTaskSchema, completeTaskSchema, cancelTaskSchema, reopenTaskSchema]) {
+    for (const schema of [completeTaskSchema, cancelTaskSchema, reopenTaskSchema]) {
       expect(schema.safeParse({}).success).toBe(false)
       expect(schema.safeParse({ expectedVersion: 1 }).success).toBe(true)
     }
+    // Assumir tambem exige, e ainda leva o destinatario explicito.
+    expect(assignTaskSchema.safeParse({ assigneeId: UUID }).success).toBe(false)
+    expect(assignTaskSchema.safeParse({ expectedVersion: 1, assigneeId: UUID }).success).toBe(true)
   })
 
   it('recusam versao zero, negativa ou fracionaria', () => {
     for (const v of [0, -1, 1.5]) {
-      expect(assignTaskSchema.safeParse({ expectedVersion: v }).success).toBe(false)
+      expect(assignTaskSchema.safeParse({ expectedVersion: v, assigneeId: UUID }).success).toBe(false)
     }
   })
 
-  it('assumir nao aceita usuario: assumir e atribuir a si mesmo', () => {
-    const r = assignTaskSchema.safeParse({ expectedVersion: 1, assigneeUserId: UUID })
-    expect(r.success).toBe(false)
+  it('assumir exige destinatario explicito', () => {
+    // A tela sempre sabe para quem esta atribuindo, inclusive quando e para a
+    // propria pessoa. Um endpoint que so serve para 'eu' precisaria de um
+    // segundo endpoint no dia em que servir para 'ela'.
+    expect(assignTaskSchema.safeParse({ expectedVersion: 1 }).success).toBe(false)
+    expect(assignTaskSchema.safeParse({ expectedVersion: 1, assigneeId: 'nao-uuid' }).success).toBe(
+      false,
+    )
   })
 
   it('transferir exige destinatario', () => {
     expect(transferTaskSchema.safeParse({ expectedVersion: 1 }).success).toBe(false)
     expect(
-      transferTaskSchema.safeParse({ expectedVersion: 1, assigneeUserId: UUID }).success,
+      transferTaskSchema.safeParse({ expectedVersion: 1, assigneeId: UUID }).success,
     ).toBe(true)
   })
 
@@ -175,7 +183,7 @@ describe('operacoes de controle', () => {
 
   it('nenhuma operacao de controle aceita contexto: contexto e imutavel', () => {
     for (const extra of [{ patientId: UUID }, { conversationId: UUID }, { appointmentId: UUID }]) {
-      expect(updateTaskDetailsSchema.safeParse({ expectedVersion: 1, title: 'ok', ...extra }).success).toBe(
+      expect(updateTaskDetailsSchema.safeParse({ expectedVersion: 1, title: 'ok valido', ...extra }).success).toBe(
         false,
       )
     }

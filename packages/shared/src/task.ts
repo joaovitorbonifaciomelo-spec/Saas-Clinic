@@ -8,8 +8,10 @@ import type { ClinicRole } from './roles'
 
    `overdue`, `today` e `upcoming` NAO estao aqui porque sao recortes de uma
    consulta, nao estados da pendencia: dependem do relogio, e um estado que muda
-   sozinho com a passagem do tempo teria de ser reescrito por alguem. `atrasada`
-   e `status = 'open' and due_at < agora`, avaliado na hora da pergunta.
+   sozinho com a passagem do tempo teria de ser reescrito por alguem. O recorte
+   "Atrasadas" e `status = 'open' and due_at < inicio do dia local`, avaliado na
+   hora da pergunta — nao confundir com `isPastDueNow`, que e outra coisa e esta
+   documentado em `TaskListItem`.
 
    `in_progress` tambem nao: quem comecou uma ligacao que nao completou nao
    mudou o mundo, e a pendencia continua pendente. O estado so passaria a valer
@@ -339,7 +341,7 @@ export const createTaskSchema = z
     title: titleSchema,
     description: descriptionSchema,
     dueAt: instantSchema.nullable().optional(),
-    assigneeUserId: z.uuid().nullable().optional(),
+    assignedTo: z.uuid().nullable().optional(),
     patientId: z.uuid().nullable().optional(),
     conversationId: z.uuid().nullable().optional(),
     appointmentId: z.uuid().nullable().optional(),
@@ -369,12 +371,18 @@ export const updateTaskDetailsSchema = versioned
     'Informe título ou descrição.',
   )
 
-/** Assumir = atribuir a SI MESMO. Nao ha campo de usuario, de proposito. */
-export const assignTaskSchema = versioned.strict()
+/**
+ * Atribuir uma pendencia que esta na fila geral.
+ *
+ * `assigneeId` e explicito mesmo quando a pessoa esta pegando a tarefa para si:
+ * a tela sempre sabe para quem esta atribuindo, e um endpoint que so serve para
+ * "eu" precisaria de um segundo endpoint no dia em que servir para "ela".
+ */
+export const assignTaskSchema = versioned.extend({ assigneeId: z.uuid() }).strict()
 
 export const releaseTaskSchema = versioned.strict()
 
-export const transferTaskSchema = versioned.extend({ assigneeUserId: z.uuid() }).strict()
+export const transferTaskSchema = versioned.extend({ assigneeId: z.uuid() }).strict()
 
 /** `null` remove o prazo. A tarefa volta para "Sem prazo", que e visao real. */
 export const changeTaskDueSchema = versioned
@@ -603,7 +611,7 @@ export interface TaskListItem {
    * visualmente uma pendencia de hoje cujo horario ja passou — ela continua na
    * aba Hoje, e e a tela que decide se destaca.
    */
-  isPastDue: boolean
+  isPastDueNow: boolean
   assignedTo: string | null
   assignee: TaskAssigneeSummary | null
   isMine: boolean
@@ -619,12 +627,66 @@ export interface TaskListItem {
 
 /** Detalhe: os campos operacionais completos, mais o contexto resolvido. */
 export interface TaskDetail extends Task {
-  isPastDue: boolean
+  isPastDueNow: boolean
   assignee: TaskAssigneeSummary | null
   isMine: boolean
   patient: TaskPatientSummary | null
   conversation: TaskConversationSummary | null
   appointment: TaskAppointmentSummary | null
+}
+
+/* =============================================================================
+   Contrato de erro das operacoes de controle
+
+   Tres codigos, e a separacao e o ponto: cada um pede uma acao diferente da
+   pessoa que esta na tela.
+
+     task_conflict        "voce viu um estado velho"    -> recarregar
+     task_invalid_state   "a acao nao cabe nesse estado" -> outra acao
+     task_patient_mismatch "a conversa aponta para outro paciente" -> corrigir
+
+   Colapsar os tres num 409 generico obrigaria a tela a oferecer "recarregue" —
+   a saida certa para o primeiro e inutil para os outros dois.
+   ========================================================================== */
+
+export const TASK_CONFLICT_ERROR = 'task_conflict' as const
+export const TASK_INVALID_STATE_ERROR = 'task_invalid_state' as const
+export const TASK_PATIENT_MISMATCH_ERROR = 'task_patient_mismatch' as const
+
+/**
+ * Estado atual devolvido junto do erro, para a tela se reconciliar sem uma
+ * segunda ida ao servidor.
+ *
+ * So acompanha a resposta quando o banco confirmou que quem perguntou AINDA e
+ * membro da clinica. Perdida a membership, a resposta vira 404 — um corpo de
+ * 409 nao pode virar canal de leitura para quem acabou de perder o acesso.
+ */
+export interface TaskConflictResponse {
+  statusCode: 409
+  error: typeof TASK_CONFLICT_ERROR
+  message: string
+  current: Task
+}
+
+export interface TaskInvalidStateResponse {
+  statusCode: 409
+  error: typeof TASK_INVALID_STATE_ERROR
+  /** Sempre presente: e o que permite a tela dizer a frase certa. */
+  reason: TaskInvalidReason
+  message: string
+  current: Task
+}
+
+/**
+ * A conversa informada ja aponta para OUTRO paciente.
+ *
+ * Sem `current`: a pendencia nem chegou a existir — o erro acontece na
+ * validacao da criacao, antes de qualquer INSERT.
+ */
+export interface TaskPatientMismatchResponse {
+  statusCode: 409
+  error: typeof TASK_PATIENT_MISMATCH_ERROR
+  message: string
 }
 
 /** Evento como a API o devolve: metadata ja validada pelo tipo. */

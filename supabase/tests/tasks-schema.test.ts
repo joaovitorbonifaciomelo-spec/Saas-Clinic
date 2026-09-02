@@ -5,7 +5,7 @@
  * pergunta e outra: o Supabase — com PostgREST, servidor de auth e a
  * reconciliacao de privilegios da plataforma no meio — se comporta igual?
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import {
   cancelar,
   concluir,
@@ -16,6 +16,7 @@ import {
   novaTask,
   reabrir,
   type Cenario,
+  registrarLimpeza,
 } from './task-helpers'
 
 let c: Cenario
@@ -24,9 +25,7 @@ beforeAll(async () => {
   c = await montarCenario()
 }, 120_000)
 
-afterAll(async () => {
-  await c?.registry.cleanup(c.admin)
-}, 120_000)
+registrarLimpeza(() => c)
 
 describe('criacao', () => {
   it('aceita pendencia geral, sem contexto nenhum', async () => {

@@ -5,7 +5,7 @@
  * pelas RPCs controladas — que e o unico caminho que existe, porque
  * `authenticated` nao tem INSERT nem UPDATE nas tabelas.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import type { TaskDetail, TaskEventView, TaskListItem, Page } from '@clinicas/shared'
 import { dayBoundsInTimezone } from '@clinicas/shared'
 import {
@@ -17,6 +17,7 @@ import {
   novaTask,
   type Cenario,
   type TaskRow,
+  registrarLimpeza,
 } from './task-helpers'
 
 let c: Cenario
@@ -71,9 +72,7 @@ beforeAll(async () => {
   if (!saude?.ok) throw new Error(`API precisa estar no ar em ${c.env.apiUrl}.`)
 }, 120_000)
 
-afterAll(async () => {
-  await c?.registry.cleanup(c.admin)
-}, 120_000)
+registrarLimpeza(() => c)
 
 /* =============================================================================
    Fixtures temporais
@@ -157,12 +156,12 @@ describe('GET /api/tasks — recortes temporais', () => {
     }
   })
 
-  it('isPastDue e outra coisa que a aba Atrasadas', async () => {
+  it('isPastDueNow e outra coisa que a aba Atrasadas', async () => {
     const p = await lista('?due=today')
     const item = p.items.find((i) => i.id === f.hojeCedo.id)!
     // Prazo era meia-noite de hoje e ja passou: o item esta em HOJE e tambem
-    // com isPastDue = true. Sao perguntas diferentes, de proposito.
-    expect(item.isPastDue).toBe(true)
+    // com isPastDueNow = true. Sao perguntas diferentes, de proposito.
+    expect(item.isPastDueNow).toBe(true)
   })
 })
 

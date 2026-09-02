@@ -12,7 +12,7 @@
  * A separacao entre os dois casos e `pg_trigger_depth()`. Se ela quebrar, um
  * destes dois testes cai — e e por isso que os dois existem lado a lado.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAnonClient } from './helpers'
 import {
@@ -21,6 +21,7 @@ import {
   montarCenario,
   novaTask,
   type Cenario,
+  registrarLimpeza,
 } from './task-helpers'
 
 let c: Cenario
@@ -29,9 +30,7 @@ beforeAll(async () => {
   c = await montarCenario()
 }, 120_000)
 
-afterAll(async () => {
-  await c?.registry.cleanup(c.admin)
-}, 120_000)
+registrarLimpeza(() => c)
 
 async function novaConversa(nome: string): Promise<string> {
   const { data, error } = await c.maria.db.rpc('conversation_create_manual', {

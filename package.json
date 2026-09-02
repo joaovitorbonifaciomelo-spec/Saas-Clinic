@@ -19,6 +19,7 @@
     "test": "pnpm build:shared && vitest run --project shared --project api",
     "test:isolation": "pnpm build:shared && vitest run --project isolation",
     "test:isolation:cleanup": "node scripts/cleanup-test-run.mjs",
+    "test:runs:sweep": "node scripts/sweep-run-manifests.mjs",
     "check:secrets": "node scripts/check-secret-boundaries.mjs",
     "verify:privileges": "node scripts/inspect-privileges.mjs",
     "db:preflight": "node scripts/db-push.mjs --check",

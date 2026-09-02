@@ -1,23 +1,38 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common'
 import {
+  TASK_CONFLICT_ERROR,
+  TASK_INVALID_REASON_LABELS,
+  TASK_INVALID_STATE_ERROR,
+  TASK_PATIENT_MISMATCH_ERROR,
   dayBoundsInTimezone,
   parseTaskEventMetadata,
   type ClinicRole,
+  type AssignTaskInput,
+  type ChangeTaskDueInput,
+  type CreateTaskInput,
   type ListTasksQuery,
   type Page,
   type PaginationQuery,
   type Task,
+  type TaskConflictResponse,
+  type TaskControlInput,
   type TaskDetail,
+  type TaskInvalidReason,
+  type TaskInvalidStateResponse,
   type TaskEventType,
   type TaskEventView,
   type TaskListItem,
+  type TaskPatientMismatchResponse,
   type TaskStatus,
+  type TransferTaskInput,
+  type UpdateTaskDetailsInput,
 } from '@clinicas/shared'
 import { SUPABASE_USER_CLIENT, type UserScopedClient } from '../supabase/supabase.types'
 import { mapPostgrestError } from '../common/postgrest-error'
@@ -83,6 +98,13 @@ interface TaskRowWithPatient extends TaskRow {
 interface TaskRowWithContext extends TaskRowWithPatient {
   conversations: ConversationEmbed | null
   appointments: AppointmentEmbed | null
+}
+
+/** Forma uniforme que TODAS as nove RPCs devolvem. */
+interface RpcResultado {
+  outcome: string
+  reason?: TaskInvalidReason
+  task?: Task
 }
 
 interface EventRow {
@@ -250,7 +272,7 @@ export class TasksService {
         title: row.title,
         status: row.status,
         dueAt: row.due_at,
-        isPastDue: row.due_at !== null && row.status === 'open' && row.due_at < agora.toISOString(),
+        isPastDueNow: row.due_at !== null && row.status === 'open' && row.due_at < agora.toISOString(),
         assignedTo: responsavel,
         assignee: responsavel
           ? { userId: responsavel, displayName: diretorio?.get(responsavel) ?? null }
@@ -297,7 +319,7 @@ export class TasksService {
 
     return {
       ...toTask(row),
-      isPastDue: row.due_at !== null && row.status === 'open' && row.due_at < agora.toISOString(),
+      isPastDueNow: row.due_at !== null && row.status === 'open' && row.due_at < agora.toISOString(),
       assignee: row.assigned_to
         ? { userId: row.assigned_to, displayName: diretorio?.get(row.assigned_to) ?? null }
         : null,
@@ -404,6 +426,210 @@ export class TasksService {
       items,
       nextCursor:
         temMais && ultimo ? encodeTimeCursor({ at: ultimo.created_at, id: ultimo.id }) : null,
+    }
+  }
+
+
+  /* =========================================================================
+     Escrita — todas passam por RPC controlada
+
+     A API nunca faz INSERT ou UPDATE direto, e NUNCA insere em `task_events`.
+     `authenticated` sequer tem o privilegio: o banco e a autoridade, e o evento
+     nasce como consequencia atomica da mesma transacao da RPC. Duplicar a
+     auditoria aqui criaria uma segunda fonte de verdade capaz de discordar.
+     ====================================================================== */
+
+  async create(
+    clinicId: string,
+    userId: string,
+    input: CreateTaskInput,
+    agora: Date = new Date(),
+  ): Promise<TaskDetail> {
+    const resultado = await this.rpc('task_create', {
+      p_clinic_id: clinicId,
+      p_title: input.title,
+      p_description: input.description ?? null,
+      p_due_at: input.dueAt ?? null,
+      p_assignee_id: input.assignedTo ?? null,
+      p_patient_id: input.patientId ?? null,
+      p_conversation_id: input.conversationId ?? null,
+      p_appointment_id: input.appointmentId ?? null,
+    })
+
+    const task = this.desempacotar(resultado, 'Pendencia nao encontrada.')
+    // Reconsulta para devolver o MESMO read model do GET: a RPC entrega a linha
+    // crua, sem paciente nem nome do responsavel resolvidos. Duas ondas na
+    // criacao, que acontece uma vez por pendencia.
+    return this.findById(clinicId, userId, task.id, agora)
+  }
+
+  updateDetails(id: string, input: UpdateTaskDetailsInput): Promise<Task> {
+    return this.controlar('task_update_details', {
+      p_task_id: id,
+      p_expected_version: input.expectedVersion,
+      p_title: input.title ?? null,
+      p_description: input.description ?? null,
+      /*
+       * O flag separa "nao mexer na descricao" de "apagar a descricao". Sem
+       * ele, `null` seria ambiguo entre as duas intencoes, e apagar uma
+       * descricao por engano e o tipo de perda que ninguem percebe na hora.
+       */
+      p_set_description: Object.hasOwn(input, 'description'),
+    })
+  }
+
+  /**
+   * Atribuir uma pendencia da fila geral.
+   *
+   * LIMITE DO BANCO, dito com clareza: `task_assign(id, versao)` atribui a
+   * `auth.uid()` — nao aceita destinatario. Entao esta rota so atende "atribuir
+   * a mim mesmo". Dar a OUTRA pessoa uma pendencia sem dono exigiria um
+   * parametro novo na RPC, ou seja, uma migration — que esta rodada nao
+   * autoriza.
+   *
+   * A recusa e 400 explicito, e nao um sucesso parcial: aceitar o `assigneeId`
+   * e atribuir a si mesmo seria a API mentindo sobre o que fez. Enquanto isso,
+   * passar a tarefa a um colega continua possivel em duas etapas — assumir e
+   * transferir —, e as duas ficam no historico.
+   */
+  assign(userId: string, id: string, input: AssignTaskInput): Promise<Task> {
+    if (input.assigneeId !== userId) {
+      throw new BadRequestException(
+        'Nesta versao, atribuir e sempre para si mesmo. Para passar a outra ' +
+          'pessoa, assuma e depois transfira.',
+      )
+    }
+    return this.controlar('task_assign', {
+      p_task_id: id,
+      p_expected_version: input.expectedVersion,
+    })
+  }
+
+  transfer(id: string, input: TransferTaskInput): Promise<Task> {
+    return this.controlar('task_transfer', {
+      p_task_id: id,
+      p_expected_version: input.expectedVersion,
+      p_to_user_id: input.assigneeId,
+    })
+  }
+
+  release(id: string, input: TaskControlInput): Promise<Task> {
+    return this.controlar('task_release', {
+      p_task_id: id,
+      p_expected_version: input.expectedVersion,
+    })
+  }
+
+  setDue(id: string, input: ChangeTaskDueInput): Promise<Task> {
+    return this.controlar('task_set_due', {
+      p_task_id: id,
+      p_expected_version: input.expectedVersion,
+      p_due_at: input.dueAt,
+    })
+  }
+
+  complete(id: string, input: TaskControlInput): Promise<Task> {
+    return this.controlar('task_complete', {
+      p_task_id: id,
+      p_expected_version: input.expectedVersion,
+    })
+  }
+
+  cancel(id: string, input: TaskControlInput): Promise<Task> {
+    return this.controlar('task_cancel', {
+      p_task_id: id,
+      p_expected_version: input.expectedVersion,
+    })
+  }
+
+  reopen(id: string, input: TaskControlInput): Promise<Task> {
+    return this.controlar('task_reopen', {
+      p_task_id: id,
+      p_expected_version: input.expectedVersion,
+    })
+  }
+
+  /* ------------------------------------------------ traducao de outcome */
+
+  private async rpc(fn: string, args: Record<string, unknown>): Promise<RpcResultado> {
+    const { data, error } = await this.supabase.rpc(fn, args)
+    if (error) {
+      /*
+       * 23503 so pode vir das FKs de contexto ou do responsavel. A mensagem e
+       * generica de proposito: distinguir "nao existe" de "e de outra clinica"
+       * ja seria revelar a existencia.
+       */
+      if (error.code === '23503') {
+        throw new NotFoundException('Referencia informada nao encontrada.')
+      }
+      throw mapPostgrestError(error)
+    }
+    return data as RpcResultado
+  }
+
+  /** Uma chamada, uma traducao. Toda operacao de controle passa por aqui. */
+  private async controlar(fn: string, args: Record<string, unknown>): Promise<Task> {
+    return this.desempacotar(await this.rpc(fn, args), 'Pendencia nao encontrada.')
+  }
+
+  /**
+   * Traduz o `outcome` do banco em resposta HTTP.
+   *
+   * Um lugar so, para as nove operacoes: se cada rota traduzisse por conta
+   * propria, bastaria uma esquecer o `reason` para a tela passar a mandar
+   * recarregar numa situacao em que recarregar nao resolve.
+   */
+  private desempacotar(resultado: RpcResultado, mensagemNaoEncontrado: string): Task {
+    switch (resultado.outcome) {
+      case 'ok':
+        return resultado.task!
+
+      case 'conflict':
+        throw new ConflictException({
+          statusCode: 409,
+          error: TASK_CONFLICT_ERROR,
+          message: 'Esta pendencia foi alterada por outra pessoa.',
+          current: resultado.task!,
+        } satisfies TaskConflictResponse)
+
+      /*
+       * 409 tambem, e a distincao e o ponto. Conflito pede "recarregue e decida
+       * de novo"; este pede outra ACAO — reabrir, transferir, assumir. Mandar
+       * recarregar aqui faria a pessoa ver o mesmo estado e tentar de novo.
+       */
+      case 'invalid_state':
+        throw new ConflictException({
+          statusCode: 409,
+          error: TASK_INVALID_STATE_ERROR,
+          reason: resultado.reason!,
+          message: TASK_INVALID_REASON_LABELS[resultado.reason!],
+          current: resultado.task!,
+        } satisfies TaskInvalidStateResponse)
+
+      /*
+       * Sem `current`: a pendencia nem chegou a existir. O erro acontece na
+       * validacao de coerencia, antes de qualquer INSERT.
+       */
+      case 'patient_mismatch':
+        throw new ConflictException({
+          statusCode: 409,
+          error: TASK_PATIENT_MISMATCH_ERROR,
+          message: 'Esta conversa ja esta vinculada a outro paciente.',
+        } satisfies TaskPatientMismatchResponse)
+
+      /*
+       * Inexistente, de outro tenant, ou vinculo perdido durante a corrida. O
+       * ultimo caso importa: `task_conflict` revalida o membership antes de
+       * devolver estado, entao quem acabou de perder o acesso recebe 404 e NAO
+       * um 409 com o conteudo da pendencia.
+       */
+      case 'not_found':
+        throw new NotFoundException(mensagemNaoEncontrado)
+
+      default:
+        // Outcome que o shared nao conhece: o banco mudou e a API nao. Melhor
+        // 500 alto do que traduzir para algo que a tela interpretaria errado.
+        throw new InternalServerErrorException('Erro ao processar a requisicao.')
     }
   }
 

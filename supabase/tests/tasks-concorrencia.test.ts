@@ -5,7 +5,7 @@
  * diferentes, com JWTs diferentes. Serializar deliberadamente provaria apenas
  * que o codigo roda em ordem — nao que a corrida tem vencedor unico.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import {
   assumir,
   cancelar,
@@ -21,6 +21,7 @@ import {
   transferir,
   type Cenario,
   type Resultado,
+  registrarLimpeza,
 } from './task-helpers'
 
 let c: Cenario
@@ -29,9 +30,7 @@ beforeAll(async () => {
   c = await montarCenario()
 }, 120_000)
 
-afterAll(async () => {
-  await c?.registry.cleanup(c.admin)
-}, 120_000)
+registrarLimpeza(() => c)
 
 /** Exatamente um `ok`, exatamente um `conflict`. */
 function umVence(resultados: Resultado[]) {

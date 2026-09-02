@@ -12,7 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import pg from 'pg'
 import type { Page, TaskListItem } from '@clinicas/shared'
-import { montarCenario, novaTask, assumir, type Cenario } from './task-helpers'
+import { montarCenario, novaTask, assumir, type Cenario, registrarLimpeza } from './task-helpers'
 
 let c: Cenario
 let db: pg.Client
@@ -70,10 +70,10 @@ beforeAll(async () => {
   if (!saude?.ok) throw new Error(`API precisa estar no ar em ${c.env.apiUrl}.`)
 }, 180_000)
 
+registrarLimpeza(() => c)
 afterAll(async () => {
-  await c?.registry.cleanup(c.admin)
   await db?.end()
-}, 120_000)
+})
 
 const buscar = async (qs: string) => {
   const r = await fetch(`${c.env.apiUrl}/api/tasks${qs}`, {

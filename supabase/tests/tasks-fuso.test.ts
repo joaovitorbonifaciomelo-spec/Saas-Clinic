@@ -8,8 +8,8 @@
  * se acumulam. O sintoma chegaria como "a tarefa sumiu", e ninguem ligaria a
  * causa.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { montarCenario, novaTask, type Cenario } from './task-helpers'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { montarCenario, novaTask, type Cenario, registrarLimpeza } from './task-helpers'
 
 let c: Cenario
 let fuso: string
@@ -24,9 +24,7 @@ beforeAll(async () => {
   fuso = (data as { timezone: string }).timezone
 }, 120_000)
 
-afterAll(async () => {
-  await c?.registry.cleanup(c.admin)
-}, 120_000)
+registrarLimpeza(() => c)
 
 /* =============================================================================
    Cortes de dia no fuso da clinica

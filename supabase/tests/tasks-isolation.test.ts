@@ -6,7 +6,7 @@
  * delas rodam com a chave ADMINISTRATIVA, que ignora RLS: se a garantia
  * dependesse so de policy, cairia ai.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import {
   UUID_INEXISTENTE,
   assumir,
@@ -18,6 +18,7 @@ import {
   rpc,
   transferir,
   type Cenario,
+  registrarLimpeza,
 } from './task-helpers'
 
 let c: Cenario
@@ -26,9 +27,7 @@ beforeAll(async () => {
   c = await montarCenario()
 }, 120_000)
 
-afterAll(async () => {
-  await c?.registry.cleanup(c.admin)
-}, 120_000)
+registrarLimpeza(() => c)
 
 describe('leitura', () => {
   it('A nao enxerga as pendencias de B', async () => {

@@ -1117,3 +1117,120 @@ Dois testes guardam os dois lados, e quebram juntos se a distinção parar de
 funcionar: *"ZERAR o contexto por escrita privilegiada é recusado"* e *"apagar o
 paciente NÃO bloqueia"* (`supabase/tests/tasks-contexto.test.ts`), mais os
 equivalentes no harness PGlite.
+
+---
+
+## 17. API de Pendências — contrato HTTP
+
+Três rotas de leitura e nove de escrita. **Não existe `PATCH /tasks/:id`
+genérico**: um endpoint que aceita qualquer campo não tem como saber qual evento
+gerar, e o histórico passaria a dizer *"algo mudou"* em vez de *"o prazo mudou"*.
+Cada rota corresponde a uma RPC e a um evento.
+
+### Rotas
+
+| Método | Rota | Corpo | Sucesso |
+|---|---|---|---|
+| `GET` | `/api/tasks` | — (query) | 200 |
+| `GET` | `/api/tasks/:id` | — | 200 |
+| `GET` | `/api/tasks/:id/events` | — (query) | 200 |
+| `POST` | `/api/tasks` | `title, description?, dueAt?, assignedTo?, patientId?, conversationId?, appointmentId?` | **201** |
+| `PATCH` | `/api/tasks/:id/details` | `title?, description?, expectedVersion` | 200 |
+| `POST` | `/api/tasks/:id/assign` | `assigneeId, expectedVersion` | 200 |
+| `POST` | `/api/tasks/:id/transfer` | `assigneeId, expectedVersion` | 200 |
+| `POST` | `/api/tasks/:id/release` | `expectedVersion` | 200 |
+| `PATCH` | `/api/tasks/:id/due` | `dueAt: ISO \| null, expectedVersion` | 200 |
+| `POST` | `/api/tasks/:id/complete` | `expectedVersion` | 200 |
+| `POST` | `/api/tasks/:id/cancel` | `expectedVersion` | 200 |
+| `POST` | `/api/tasks/:id/reopen` | `expectedVersion` | 200 |
+
+`201` só na criação — é a única que produz recurso novo. O `@Post()` do NestJS
+responde 201 por padrão, e deixar o default nas outras oito faria a tela ler
+*"criei algo"* onde nada foi criado.
+
+`expectedVersion` vai **no corpo**, nunca em query string: query string é o
+lugar de dado que se cola em link e se reenvia sem querer.
+
+### Outcome do banco → HTTP
+
+| `outcome` | HTTP | `error` | Corpo |
+|---|---|---|---|
+| `ok` | 200 / 201 | — | a pendência |
+| `not_found` | 404 | — | mensagem genérica |
+| `conflict` | 409 | `task_conflict` | `current` |
+| `invalid_state` | 409 | `task_invalid_state` | `reason` + `current` |
+| `patient_mismatch` | 409 | `task_patient_mismatch` | sem `current` |
+
+Três códigos 409 diferentes porque **cada um pede uma ação diferente da pessoa
+na tela**:
+
+```
+task_conflict         "você viu um estado velho"        -> recarregar
+task_invalid_state    "a ação não cabe nesse estado"    -> outra ação
+task_patient_mismatch "a conversa aponta outro paciente" -> corrigir
+```
+
+Colapsar os três obrigaria a UI a oferecer *"recarregue"* — a saída certa para o
+primeiro e **inútil** para os outros dois: a pessoa recarregaria, veria o mesmo,
+e tentaria de novo.
+
+`reason` é obrigatório em `task_invalid_state`, e vem de uma lista fechada:
+`terminal`, `already_assigned`, `not_assigned`, `invalid_transition`.
+
+`current` só acompanha a resposta quando o banco confirmou que quem perguntou
+**ainda é membro** da clínica. Perdida a membership, a resposta vira 404 — um
+corpo de 409 não pode virar canal de leitura para quem acabou de perder o
+acesso. `patient_mismatch` nunca traz `current` porque a pendência não chegou a
+existir.
+
+### Precedência, em toda operação
+
+```
+1. existência + membership  -> not_found
+2. expectedVersion          -> conflict
+3. regra de domínio         -> invalid_state | no-op | executa
+```
+
+Uma pendência **concluída na versão 7** que recebe `details` com
+`expectedVersion: 6` responde `conflict`, não `invalid_state`. Quem opera sobre
+estado obsoleto precisa saber disso **antes** de ser ensinado sobre o estado
+atual — do contrário corrige a regra errada e tenta de novo com a mesma versão
+velha.
+
+### No-ops
+
+Sete situações devolvem **200, mesma versão, zero evento**: texto idêntico,
+prazo idêntico, transferir para o mesmo responsável, devolver já sem
+responsável, concluir já concluída, cancelar já cancelada, reabrir já aberta.
+
+Não devolvem `204`: a tela precisa do estado atual para se reconciliar, e um
+corpo vazio a obrigaria a uma segunda requisição.
+
+**No-op só existe com a versão em dia.** Com `expectedVersion` obsoleto é
+`conflict`, sempre — a precedência acima não abre exceção.
+
+### `POST /api/tasks` não é idempotente · dívida registrada
+
+Um retry depois de resposta perdida **cria uma segunda pendência**. Não há
+`client_request_id` nem constraint que impeça, e não haverá nesta versão: a
+solução exige coluna nova e migration.
+
+Mitigação de UI — bloquear duplo clique, manter estado de envio — reduz o caso
+comum e **não é garantia de rede**. Dizer o contrário seria confundir ergonomia
+com idempotência.
+
+**Reavaliar obrigatoriamente antes de:** criação automática de pendências,
+automações, ou qualquer integração externa que faça retry. Nesses três casos o
+retry deixa de ser exceção e passa a ser rotina.
+
+### Limitação conhecida de `assign`
+
+`task_assign(id, versão)` atribui a `auth.uid()` — a RPC **não aceita
+destinatário**. Então `POST /:id/assign` só atende *"atribuir a mim mesmo"*, e
+recusa com **400 explícito** quando `assigneeId` é outra pessoa.
+
+A recusa é preferível ao silêncio: aceitar o `assigneeId` e atribuir a si mesmo
+seria a API mentindo sobre o que fez. Passar a pendência a um colega continua
+possível em duas etapas — assumir e transferir —, e as duas ficam no histórico.
+
+Resolver de vez exige acrescentar `p_assignee_id` à RPC, ou seja, uma migration.

@@ -139,32 +139,90 @@ export class TestResourceRegistry {
    * clinica nem os pacientes. Primeiro as clinicas (que cascateiam pacientes e
    * memberships), depois os usuarios.
    *
-   * O manifesto so e removido se tudo saiu; qualquer sobra mantem o arquivo para
-   * a limpeza manual.
+   * O manifesto so some quando a VERIFICACAO confirma que nada sobrou. Ver
+   * `verificarRemocao`.
    */
-  async cleanup(admin: SupabaseClient): Promise<void> {
-    const problems: string[] = []
+  async cleanup(
+    admin: SupabaseClient,
+    opcoes: { estadoIncerto?: boolean } = {},
+  ): Promise<void> {
+    const erros: string[] = []
 
     if (this.clinicIds.length > 0) {
       const { error } = await admin.from('clinics').delete().in('id', this.clinicIds)
-      if (error) problems.push(`clinicas: ${error.message}`)
+      if (error) erros.push(`clinicas: ${error.message}`)
     }
 
     for (const userId of this.userIds) {
       const { error } = await admin.auth.admin.deleteUser(userId)
-      if (error) problems.push(`usuario ${userId}: ${error.message}`)
+      /*
+       * "User not found" NAO e falha: e o estado desejado.
+       *
+       * Um teste pode apagar a propria conta efemera de proposito — a suite de
+       * autoria historica faz exatamente isso. Tratar o erro do DELETE como
+       * sobra fazia o manifesto ser preservado e um alarme falso ser impresso,
+       * a cada execucao, para recursos que ja tinham ido embora. Era assim que
+       * .runs/ acumulava.
+       *
+       * Por isso o erro nao decide nada aqui: quem decide e a verificacao.
+       */
+      if (error) erros.push(`usuario ${userId}: ${error.message}`)
     }
 
-    if (problems.length > 0) {
+    const sobras = await this.verificarRemocao(admin)
+
+    if (sobras.length > 0 || opcoes.estadoIncerto) {
+      const motivo =
+        sobras.length > 0
+          ? `ainda existem: ${sobras.join(', ')}`
+          : 'a suite falhou, entao o estado pode ter recursos criados fora do registry'
       console.error(
-        `Limpeza incompleta da execucao ${this.testRunId}:\n  ${problems.join('\n  ')}\n` +
-          `Manifesto preservado em ${this.manifestPath}\n` +
-          `Rode: pnpm test:isolation:cleanup ${this.testRunId}`,
+        `Manifesto PRESERVADO para a execucao ${this.testRunId}: ${motivo}\n` +
+          (erros.length > 0 ? `  erros durante a remocao: ${erros.join('; ')}\n` : '') +
+          `  arquivo: ${this.manifestPath}\n` +
+          `  rode: pnpm test:isolation:cleanup ${this.testRunId}`,
       )
       return
     }
 
     rmSync(this.manifestPath, { force: true })
+  }
+
+  /**
+   * Confere no banco o que REALMENTE sobrou.
+   *
+   * A pergunta certa nao e "o DELETE deu erro?", e sim "o recurso ainda esta
+   * la?". As duas respostas divergem nos dois sentidos: apagar algo que ja nao
+   * existia devolve erro sem haver sobra, e um DELETE que responde 200 pode nao
+   * ter alcancado nada. So a verificacao autoriza remover o manifesto.
+   */
+  private async verificarRemocao(admin: SupabaseClient): Promise<string[]> {
+    const sobras: string[] = []
+
+    if (this.clinicIds.length > 0) {
+      const { data, error } = await admin.from('clinics').select('id').in('id', this.clinicIds)
+      if (error) {
+        // Sem conseguir verificar, o estado e incerto — e incerto preserva.
+        sobras.push(`clinicas (verificacao falhou: ${error.message})`)
+      } else {
+        for (const linha of (data ?? []) as { id: string }[]) sobras.push(`clinica ${linha.id}`)
+      }
+    }
+
+    for (const userId of this.userIds) {
+      const { data, error } = await admin.auth.admin.getUserById(userId)
+      if (data?.user) sobras.push(`usuario ${userId}`)
+      else if (error && !this.pareceAusente(error)) {
+        sobras.push(`usuario ${userId} (verificacao falhou: ${error.message})`)
+      }
+    }
+
+    return sobras
+  }
+
+  /** Ausencia e o resultado esperado; qualquer outro erro e incerteza. */
+  private pareceAusente(error: { message?: string; status?: number }): boolean {
+    return error.status === 404 || /not found/i.test(error.message ?? '')
   }
 }
 
