@@ -3995,3 +3995,445 @@ th.num {
     opacity: 0.6;
   }
 }
+
+/* =============================================================================
+   PENDENCIAS
+
+   Fila operacional COMPACTA, nao kanban: uma lista so, densa, com um drawer
+   que sobrepoe (nunca uma terceira coluna fixa) para ver e agir sobre UMA
+   pendencia por vez. Reusa .card, .badge, .avatar, .drawer e .master-meta
+   como primitivas — so o que e especifico de Pendencias ganha classe nova,
+   com o mesmo prefixo .pd- que os outros modulos usam para se manterem
+   independentes uns dos outros.
+   ============================================================================= */
+
+.pd-shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* Aviso de conflito/estado invalido. Mesma forma do .at-aviso: pilula fixa
+   no rodape, nunca rouba foco, nunca empurra layout. */
+.pd-aviso {
+  position: fixed;
+  left: 50%;
+  bottom: var(--s5);
+  transform: translateX(-50%);
+  z-index: 70;
+  max-width: min(520px, calc(100vw - var(--s5) * 2));
+  background: var(--nav);
+  color: var(--nav-text-strong);
+  padding: 10px var(--s4);
+  border-radius: 10px;
+  font-size: 12.5px;
+  text-align: center;
+  box-shadow: var(--shadow-pop);
+}
+
+.pd-lista {
+  display: flex;
+  flex-direction: column;
+}
+.pd-lista-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s4) var(--s4) var(--s3);
+  flex-wrap: wrap;
+}
+.pd-titulo {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.pd-visoes {
+  display: flex;
+  gap: 4px;
+  padding: 0 var(--s3) var(--s3);
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pd-visoes::-webkit-scrollbar {
+  display: none;
+}
+.pd-visao {
+  flex: none;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.pd-visao:hover {
+  background: var(--surface-hover);
+}
+.pd-visao.is-on {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  color: var(--brand-hover);
+  font-weight: 600;
+}
+
+.pd-itens {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/*
+  Cada li E a linha da grade. O Link vira display:contents para que seus
+  filhos ocupem as colunas do PAI diretamente — assim o botao "Concluir" e um
+  irmao do link (nunca um button DENTRO de um a, invalido em HTML5) mas
+  ainda alinhado na mesma linha visual.
+*/
+.pd-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) 150px 120px 150px 92px 88px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px var(--s4);
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pd-item:last-child {
+  border-bottom: 0;
+}
+.pd-item:hover {
+  background: var(--surface-sunk);
+}
+.pd-item.is-selected {
+  background: var(--brand-soft);
+  border-left-color: var(--brand);
+}
+.pd-item-link {
+  display: contents;
+  color: inherit;
+  text-decoration: none;
+}
+.pd-item-titulo {
+  font-size: 13px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pd-item-contexto,
+.pd-item-prazo,
+.pd-item-responsavel {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pd-item-prazo.is-atrasado {
+  color: var(--danger);
+  font-weight: 600;
+}
+.pd-item-concluir {
+  justify-self: end;
+}
+
+.pd-vazio {
+  padding: var(--s6) var(--s4);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  align-items: center;
+}
+.pd-vazio-titulo {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.pd-vazio-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 34ch;
+}
+.pd-mais {
+  padding: var(--s2) var(--s3);
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* Status: mesma paleta semantica do restante do produto — aberta usa o tom de
+   marca (e a que exige atencao), concluida o tom "completed", cancelada o
+   tom neutro de "scheduled". */
+.badge.pd-st-open {
+  background: var(--brand-soft);
+  color: var(--brand-hover);
+}
+.badge.pd-st-completed {
+  background: var(--st-completed-bg);
+  color: var(--st-completed-fg);
+}
+.badge.pd-st-cancelled {
+  background: var(--st-scheduled-bg);
+  color: var(--st-scheduled-fg);
+}
+
+/* --- DRAWER --------------------------------------------------------------- */
+.pd-drawer {
+  gap: var(--s4);
+}
+.pd-terminal-nota {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+.pd-drawer-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.pd-titulo-linha {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.pd-drawer-titulo {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.pd-descricao {
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.pd-bloco {
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pd-linha-acao {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.pd-linha-acao > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pd-linha-botoes {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pd-prazo-atrasado {
+  color: var(--danger);
+  font-weight: 600;
+}
+.pd-prazo-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pd-contexto-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 8px;
+  background: var(--surface-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+
+.pd-historico {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.pd-evento {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.pd-evento-marca {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.pd-evento-texto {
+  min-width: 0;
+  flex: 1;
+}
+.pd-evento-hora {
+  flex: none;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.pd-drawer-pe {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line-soft);
+}
+.pd-cancelar {
+  color: var(--danger);
+}
+.pd-cancelar:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+/* --- FORMULARIOS ------------------------------------------------------------ */
+.pd-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.pd-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pd-form-pe {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+
+/* --- POPOVER DE EQUIPE ------------------------------------------------------
+   Mesma forma do .at-pop/.at-equipe: popover ancorado, fecha ao clicar
+   fora ou no Esc (tratado no componente). */
+.pd-pop-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.pd-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: 240px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  padding: 6px;
+}
+.pd-pop-vazio {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  padding: 4px 4px 6px;
+}
+.pd-equipe {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pd-equipe-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid transparent;
+  font-size: 13px;
+  text-align: left;
+  /*
+    O reset global estiliza button como botao primario — fundo da marca e
+    texto BRANCO (ver "button, .btn" no topo deste arquivo). Este botao troca
+    o fundo por branco/sunk e herdaria a cor: texto branco sobre branco. Mesma
+    correcao ja aplicada em .at-equipe-item.
+  */
+  color: var(--ink);
+  font-weight: 450;
+}
+.pd-equipe-item:hover:not(:disabled) {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--ink);
+}
+
+/* --- RESPONSIVO -------------------------------------------------------------
+   Abaixo de 860px a grade de 6 colunas nao cabe: a linha vira duas fileiras
+   empilhadas. O botao Concluir sai da grade e vai para a extremidade direita
+   da segunda fileira, e o Link deixa de ser display:contents para virar ele
+   mesmo o container da segunda fileira. */
+@media (max-width: 860px) {
+  .pd-item {
+    grid-template-columns: 1fr auto;
+    row-gap: 4px;
+  }
+  .pd-item-link {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-column: 1 / -1;
+    align-items: center;
+    row-gap: 4px;
+    column-gap: 10px;
+  }
+  .pd-item-titulo {
+    grid-column: 1 / 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .badge.pd-st-open,
+  .badge.pd-st-completed,
+  .badge.pd-st-cancelled {
+    grid-column: 2 / 3;
+    justify-self: end;
+  }
+  .pd-item-contexto,
+  .pd-item-prazo,
+  .pd-item-responsavel {
+    grid-column: 1 / 3;
+    white-space: normal;
+  }
+  .pd-item-concluir {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+}
+
+@media (max-width: 480px) {
+  .pd-lista-topo {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

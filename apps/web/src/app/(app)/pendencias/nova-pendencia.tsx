@@ -1,0 +1,168 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import type { ClinicMemberSummary } from '@clinicas/shared'
+import { TASK_TITLE_MAX, TASK_DESCRIPTION_MAX } from '@clinicas/shared'
+import { carregarPacientesAction, criarPendenciaAction } from './pendencias-actions'
+import { formatPhone } from '../../ui/format'
+import { deDatetimeLocal } from './pd-format'
+
+/**
+ * Nova pendencia.
+ *
+ * Contexto e OPCIONAL — uma pendencia geral da clinica e legitima, e nao ha
+ * campo algum "obrigando" a escolher paciente, conversa ou agendamento. So
+ * paciente aparece aqui: nao existe seletor reutilizavel de conversa nem de
+ * agendamento no projeto (ver `atendimento/painel-contexto.tsx`, que tambem so
+ * busca paciente), e inventar um agora seria escopo que esta rodada nao pediu.
+ * Vincular a uma conversa ou agendamento especifico fica para quando esses
+ * modulos ganharem o botao "Criar pendencia" — fora desta rodada, de proposito.
+ */
+export function NovaPendencia({
+  equipe,
+  timezone,
+  onFechar,
+  onCriada,
+}: {
+  equipe: ClinicMemberSummary[]
+  timezone: string
+  onFechar: () => void
+  onCriada: (id: string) => void
+}) {
+  const [titulo, setTitulo] = useState('')
+  const [descricao, setDescricao] = useState('')
+  const [prazo, setPrazo] = useState('')
+  const [responsavelId, setResponsavelId] = useState('')
+  const [pacienteId, setPacienteId] = useState('')
+  const [pacientes, setPacientes] = useState<{ id: string; name: string; phone: string }[]>([])
+  const [erro, setErro] = useState<string | null>(null)
+  const [salvando, setSalvando] = useState(false)
+
+  useEffect(() => {
+    carregarPacientesAction()
+      .then(setPacientes)
+      .catch(() => setPacientes([]))
+  }, [])
+
+  useEffect(() => {
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onFechar()
+    }
+    window.addEventListener('keydown', aoTeclar)
+    return () => window.removeEventListener('keydown', aoTeclar)
+  }, [onFechar])
+
+  async function salvar(e: React.FormEvent): Promise<void> {
+    e.preventDefault()
+    if (salvando) return
+
+    const tituloLimpo = titulo.trim()
+    if (tituloLimpo.length < 3) {
+      setErro('O título precisa de pelo menos 3 caracteres.')
+      return
+    }
+
+    setSalvando(true)
+    setErro(null)
+
+    const r = await criarPendenciaAction({
+      title: tituloLimpo,
+      description: descricao.trim() === '' ? null : descricao.trim(),
+      dueAt: prazo === '' ? null : deDatetimeLocal(prazo, timezone),
+      assignedTo: responsavelId === '' ? null : responsavelId,
+      patientId: pacienteId === '' ? null : pacienteId,
+    })
+    setSalvando(false)
+
+    if (r.ok && r.id) {
+      onCriada(r.id)
+    } else {
+      setErro(r.mensagem ?? 'Não foi possível criar a pendência.')
+    }
+  }
+
+  return (
+    <div
+      className="drawer-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onFechar()
+      }}
+    >
+      <div className="drawer pd-drawer" role="dialog" aria-modal="true" aria-label="Nova pendência">
+        <div className="drawer-head">
+          <h2>Nova pendência</h2>
+          <button type="button" className="btn ghost sm" onClick={onFechar}>
+            Fechar
+          </button>
+        </div>
+
+        <form className="pd-form" onSubmit={salvar}>
+          <label>
+            <span className="label">Título</span>
+            <input
+              value={titulo}
+              onChange={(e) => setTitulo(e.target.value)}
+              maxLength={TASK_TITLE_MAX}
+              placeholder="O que precisa ser feito"
+              autoFocus
+              required
+            />
+          </label>
+
+          <label>
+            <span className="label">Descrição (opcional)</span>
+            <textarea
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+              maxLength={TASK_DESCRIPTION_MAX}
+              rows={3}
+              placeholder="Instrução operacional — o que fazer, não anotação clínica"
+            />
+          </label>
+
+          <div className="field-row">
+            <label>
+              <span className="label">Prazo (opcional)</span>
+              <input type="datetime-local" value={prazo} onChange={(e) => setPrazo(e.target.value)} />
+            </label>
+
+            <label>
+              <span className="label">Responsável (opcional)</span>
+              <select value={responsavelId} onChange={(e) => setResponsavelId(e.target.value)}>
+                <option value="">Fila geral</option>
+                {equipe.map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {m.displayName ?? 'Sem nome cadastrado'}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label>
+            <span className="label">Paciente (opcional)</span>
+            <select value={pacienteId} onChange={(e) => setPacienteId(e.target.value)}>
+              <option value="">Pendência geral da clínica</option>
+              {pacientes.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} — {formatPhone(p.phone)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {erro ? <p className="error">{erro}</p> : null}
+
+          <div className="pd-form-pe">
+            <button type="button" className="btn secondary sm" onClick={onFechar}>
+              Cancelar
+            </button>
+            <button type="submit" className="btn sm" disabled={salvando}>
+              {salvando ? 'Criando…' : 'Criar pendência'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}

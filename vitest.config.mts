@@ -34,10 +34,13 @@ export default defineConfig({
             'tests/clinic-hint.test.ts',
             'tests/atendimento-*.test.ts',
             'tests/agenda-mes.test.ts',
-            // Pendencias tem projeto proprio (`pnpm test:tasks`). Sem esta
-            // linha as suites rodam DUAS vezes: o include desta secao e
-            // `tests/**`, entao todo arquivo novo entra aqui por padrao.
+            // Pendencias (banco) tem projeto proprio (`pnpm test:tasks`); a UI
+            // de Pendencias entra no projeto `hint`, que ja tem o Next no ar.
+            // Sem estas duas linhas, as suites rodariam DUAS vezes: o include
+            // desta secao e `tests/**`, entao todo arquivo novo entra aqui por
+            // padrao.
             'tests/tasks-*.test.ts',
+            'tests/pendencias-ui.test.ts',
           ],
           testTimeout: 60_000,
           hookTimeout: 120_000,
@@ -78,6 +81,7 @@ export default defineConfig({
             'tests/clinic-hint.test.ts',
             'tests/atendimento-ui.test.ts',
             'tests/agenda-mes.test.ts',
+            'tests/pendencias-ui.test.ts',
           ],
           testTimeout: 120_000,
           hookTimeout: 180_000,

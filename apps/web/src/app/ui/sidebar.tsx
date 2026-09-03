@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   IconCalendar,
+  IconCheck,
   IconCross,
   IconInbox,
   IconStethoscope,
@@ -24,6 +25,7 @@ const OPERACAO = [
   { href: '/dashboard', label: 'Hoje', Icon: IconToday },
   { href: '/agenda', label: 'Agenda', Icon: IconCalendar },
   { href: '/atendimento', label: 'Atendimento', Icon: IconInbox },
+  { href: '/pendencias', label: 'Pendências', Icon: IconCheck },
   { href: '/patients', label: 'Pacientes', Icon: IconUsers },
 ] as const
 
