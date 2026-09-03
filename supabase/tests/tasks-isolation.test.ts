@@ -70,6 +70,7 @@ describe('escrita cross-tenant', () => {
     const inexistente = await rpc(c.maria.db, 'task_assign', {
       p_task_id: UUID_INEXISTENTE,
       p_expected_version: 1,
+      p_assignee_id: c.maria.userId,
     })
 
     // Byte a byte iguais: um 403 aqui confirmaria que a tarefa existe.
