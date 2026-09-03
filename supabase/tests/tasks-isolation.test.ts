@@ -9,7 +9,7 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
   UUID_INEXISTENTE,
-  assumir,
+  atribuir,
   concluir,
   criarTask,
   eventosDe,
@@ -66,7 +66,7 @@ describe('escrita cross-tenant', () => {
   it('operar em tarefa alheia devolve not_found, igual a id inexistente', async () => {
     const alheia = await novaTask(c.bruno.db, c.bruno.clinicId, { title: 'Da clinica B' })
 
-    const naAlheia = await assumir(c.maria.db, alheia)
+    const naAlheia = await atribuir(c.maria.db, alheia, c.maria.userId)
     const inexistente = await rpc(c.maria.db, 'task_assign', {
       p_task_id: UUID_INEXISTENTE,
       p_expected_version: 1,
@@ -79,7 +79,7 @@ describe('escrita cross-tenant', () => {
 
   it('transferir para membro de outra clinica devolve not_found', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Transferir para fora' })
-    const minha = (await assumir(c.maria.db, t)).task!
+    const minha = (await atribuir(c.maria.db, t, c.maria.userId)).task!
     const r = await transferir(c.maria.db, minha, c.bruno.userId)
     expect(r.outcome).toBe('not_found')
   })
@@ -120,7 +120,7 @@ describe('escrita cross-tenant', () => {
 describe('nao vazamento em conflito', () => {
   it('conflito nao devolve a tarefa depois de a membership acabar', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Ex-membro' })
-    await assumir(c.maria.db, t) // versao avanca; a do Joao fica obsoleta
+    await atribuir(c.maria.db, t, c.maria.userId) // versao avanca; a do Joao fica obsoleta
 
     await c.admin
       .from('clinic_members')
@@ -141,7 +141,7 @@ describe('nao vazamento em conflito', () => {
 
   it('membro da clinica recebe conflito COM o estado atual', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Conflito legitimo' })
-    await assumir(c.maria.db, t)
+    await atribuir(c.maria.db, t, c.maria.userId)
     const r = await concluir(c.joao.db, t)
     expect(r.outcome).toBe('conflict')
     expect(r.task?.version).toBe(2)
@@ -151,7 +151,7 @@ describe('nao vazamento em conflito', () => {
 describe('remocao de membership', () => {
   it('devolve a tarefa a fila sem bloquear, e preserva o historico', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Do Joao' })
-    await assumir(c.joao.db, t)
+    await atribuir(c.joao.db, t, c.joao.userId)
 
     const { error } = await c.admin
       .from('clinic_members')

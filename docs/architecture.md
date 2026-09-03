@@ -626,6 +626,46 @@ O script só apaga IDs listados no manifesto. Antes de tocar em qualquer coisa, 
 
 A validação de UUID cumpre um segundo papel: sem ela, um argumento como `../../algo` escaparia do diretório de manifestos e faria o script obedecer a um arquivo arbitrário.
 
+### `.runs/` — NUNCA apagar com `rm`
+
+> **Regra permanente. `rm supabase/tests/.runs/*.json` — ou qualquer equivalente
+> — está proibido como procedimento de limpeza.**
+
+Um manifesto é a **única** lista de IDs de uma execução que deixou sobra.
+Apagá-lo em massa é rápido e destrói exatamente o registro de recuperação de
+quem mais precisa dele.
+
+Isso aconteceu neste projeto, e vale registrar porque o erro parecia inofensivo:
+uma suíte quebrou no `afterAll` (a assinatura de hook do vitest mudou), a
+limpeza nunca rodou, e os manifestos preservados apontavam para recursos vivos.
+Um `rm` "para limpar a pasta" apagou justamente esses manifestos. Resultado: **39
+contas sintéticas, 26 clínicas e 350 pendências órfãs no Dev**, sem nenhum
+arquivo apontando para elas. A limpeza teve de ser reconstruída por identidade —
+contas no domínio reservado `@example.test` e clínicas cujos membros eram
+*todos* sintéticos.
+
+**Essa reconstrução foi excepcional e NÃO vira mecanismo oficial.** Ela existiu
+porque o registro tinha sido destruído; recriá-la como rotina seria transformar
+uma varredura por padrão no caminho normal, que é justamente o que a disciplina
+de limpeza por ID exato evita.
+
+Manifesto só sai por dois caminhos:
+
+1. **O ciclo de vida do `TestResourceRegistry`.** O `afterAll` remove o arquivo
+   apenas quando a **verificação no banco** confirma que nada sobrou — não
+   quando o `DELETE` "não deu erro". A distinção importa: apagar uma conta que
+   um teste já removeu de propósito devolve `User not found`, e tratar isso como
+   sobra era o que fazia `.runs/` acumular.
+2. **`pnpm test:runs:sweep`.** Percorre os manifestos, consulta o banco para cada
+   recurso, e apaga **somente** os de execuções comprovadamente limpas. É
+   read-only no banco: não remove recurso nenhum. Para remover recursos existe
+   `pnpm test:isolation:cleanup <test_run_id>`, que apaga por ID exato.
+   `--dry-run` lista sem apagar.
+
+Manifesto preservado é sinal, não sujeira: ele diz que alguma execução terminou
+com estado incerto e alguém precisa olhar.
+
+
 O princípio: **deixar resíduo de teste é preferível a qualquer query de limpeza capaz de alcançar dado legítimo.**
 
 ### Portão de confirmação do `db:push`

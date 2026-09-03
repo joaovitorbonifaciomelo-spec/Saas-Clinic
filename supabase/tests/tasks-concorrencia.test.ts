@@ -7,7 +7,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
-  assumir,
+  atribuir,
   cancelar,
   concluir,
   definirPrazo,
@@ -43,7 +43,7 @@ describe('corridas', () => {
   it('dois assumires simultaneos: um vence, um conflita, um unico evento', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Disputada' })
 
-    const [a, b] = await Promise.all([assumir(c.maria.db, t), assumir(c.joao.db, t)])
+    const [a, b] = await Promise.all([atribuir(c.maria.db, t, c.maria.userId), atribuir(c.joao.db, t, c.joao.userId)])
 
     expect(umVence([a, b])).toEqual({ oks: 1, conflitos: 1 })
 
@@ -153,7 +153,7 @@ describe('versao obsoleta', () => {
 
   it('conflito nao gera evento nem altera a linha', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Conflito limpo' })
-    await assumir(c.maria.db, t)
+    await atribuir(c.maria.db, t, c.maria.userId)
     const antes = await lerTask(c.admin, t.id)
 
     const r = await devolver(c.joao.db, t) // versao 1, obsoleta
@@ -175,7 +175,7 @@ describe('terminal congelada', () => {
 
     const resultados = [
       await editar(c.maria.db, feita, { title: 'Outro titulo' }),
-      await assumir(c.maria.db, feita),
+      await atribuir(c.maria.db, feita, c.maria.userId),
       await transferir(c.maria.db, feita, c.joao.userId),
       await devolver(c.maria.db, feita),
       await definirPrazo(c.maria.db, feita, new Date(Date.now() + 60_000).toISOString()),
@@ -197,7 +197,7 @@ describe('terminal congelada', () => {
     const reaberta = (await reabrir(c.maria.db, feita)).task!
     expect(reaberta.status).toBe('open')
 
-    const r = await assumir(c.maria.db, reaberta)
+    const r = await atribuir(c.maria.db, reaberta, c.maria.userId)
     expect(r.outcome).toBe('ok')
     expect(r.task?.assignedTo).toBe(c.maria.userId)
   })
@@ -221,9 +221,9 @@ describe('terminal congelada', () => {
 describe('semantica de responsavel', () => {
   it('assumir tarefa que ja tem dono nao sobrescreve', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Ja tem dono' })
-    const minha = (await assumir(c.maria.db, t)).task!
+    const minha = (await atribuir(c.maria.db, t, c.maria.userId)).task!
 
-    const r = await assumir(c.joao.db, minha)
+    const r = await atribuir(c.joao.db, minha, c.joao.userId)
     expect(r.outcome).toBe('invalid_state')
     expect(r.reason).toBe('already_assigned')
 
@@ -250,7 +250,7 @@ describe('no-ops', () => {
 
   it('transferir para o mesmo responsavel', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Mesma pessoa' })
-    const minha = (await assumir(c.maria.db, t)).task!
+    const minha = (await atribuir(c.maria.db, t, c.maria.userId)).task!
     const r = await transferir(c.maria.db, minha, c.maria.userId)
     expect(r.outcome).toBe('ok')
     expect(r.task?.version).toBe(minha.version)

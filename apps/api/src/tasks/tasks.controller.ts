@@ -145,11 +145,10 @@ export class TasksController {
   @Post(':id/assign')
   @HttpCode(200)
   assign(
-    @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body(new ZodValidationPipe(assignTaskSchema)) body: AssignTaskInput,
   ): Promise<Task> {
-    return this.tasks.assign(user.id, id, body)
+    return this.tasks.assign(id, body)
   }
 
   @Post(':id/transfer')

@@ -372,11 +372,15 @@ export const updateTaskDetailsSchema = versioned
   )
 
 /**
- * Atribuir uma pendencia que esta na fila geral.
+ * Atribuir uma pendencia que esta na fila geral a um membro EXPLICITO.
  *
- * `assigneeId` e explicito mesmo quando a pessoa esta pegando a tarefa para si:
- * a tela sempre sabe para quem esta atribuindo, e um endpoint que so serve para
- * "eu" precisaria de um segundo endpoint no dia em que servir para "ela".
+ * `assigneeId` e obrigatorio inclusive quando a pessoa esta pegando a tarefa
+ * para si. Um endpoint que so servisse para "eu" precisaria de um segundo
+ * endpoint no dia em que servisse para "ela" — e dar a pendencia a uma colega
+ * viraria assumir-e-transferir, duas versoes e dois eventos para uma decisao
+ * so, com o historico contando uma sequencia que nao aconteceu.
+ *
+ * Quem EXECUTA sai do JWT; `assigneeId` e quem RECEBE.
  */
 export const assignTaskSchema = versioned.extend({ assigneeId: z.uuid() }).strict()
 

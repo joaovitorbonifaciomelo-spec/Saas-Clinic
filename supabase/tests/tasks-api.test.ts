@@ -10,7 +10,7 @@ import type { TaskDetail, TaskEventView, TaskListItem, Page } from '@clinicas/sh
 import { dayBoundsInTimezone } from '@clinicas/shared'
 import {
   UUID_INEXISTENTE,
-  assumir,
+  atribuir,
   cancelar,
   concluir,
   montarCenario,
@@ -168,7 +168,7 @@ describe('GET /api/tasks — recortes temporais', () => {
 describe('GET /api/tasks — filtros de responsavel e status', () => {
   it('mine sai do JWT, nao da URL', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Da Maria' })
-    await assumir(c.maria.db, t)
+    await atribuir(c.maria.db, t, c.maria.userId)
     const p = await lista('?assignment=mine')
     expect(ids(p)).toContain(t.id)
     expect(p.items.every((i) => i.isMine)).toBe(true)
@@ -183,7 +183,7 @@ describe('GET /api/tasks — filtros de responsavel e status', () => {
 
   it('assigneeId valido filtra e resolve o nome atual', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Do Joao' })
-    await assumir(c.joao.db, t)
+    await atribuir(c.joao.db, t, c.joao.userId)
     const p = await lista(`?assigneeId=${c.joao.userId}`)
     const item = p.items.find((i) => i.id === t.id)!
     expect(item.assignee).toEqual({ userId: c.joao.userId, displayName: 'Colega JOAO' })
@@ -402,7 +402,7 @@ describe('GET /api/tasks/:id', () => {
 describe('GET /api/tasks/:id/events', () => {
   it('devolve o historico do mais recente para o mais antigo', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Historico' })
-    const assumida = (await assumir(c.maria.db, t)).task!
+    const assumida = (await atribuir(c.maria.db, t, c.maria.userId)).task!
     await concluir(c.maria.db, assumida)
 
     const r = await comoMaria<Page<TaskEventView>>(`/tasks/${t.id}/events`)
@@ -412,7 +412,7 @@ describe('GET /api/tasks/:id/events', () => {
 
   it('metadata vem tipada por eventType', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Metadata' })
-    await assumir(c.maria.db, t)
+    await atribuir(c.maria.db, t, c.maria.userId)
 
     const r = await comoMaria<Page<TaskEventView>>(`/tasks/${t.id}/events`)
     const assigned = r.json.items.find((e) => e.eventType === 'assigned')!
@@ -454,7 +454,7 @@ describe('GET /api/tasks/:id/events', () => {
 
   it('pagina do mais recente para o mais antigo, sem repetir', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Muitos eventos' })
-    const a = (await assumir(c.maria.db, t)).task!
+    const a = (await atribuir(c.maria.db, t, c.maria.userId)).task!
     const f = (await concluir(c.maria.db, a)).task!
     await c.maria.db.rpc('task_reopen', { p_task_id: f.id, p_expected_version: f.version })
 

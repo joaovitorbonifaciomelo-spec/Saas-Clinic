@@ -378,16 +378,116 @@ describe('POST /api/tasks/:id/assign', () => {
     expect(r.json.error).toBe('task_conflict')
   })
 
-  it('atribuir a OUTRA pessoa e recusado com 400 explicito nesta versao', async () => {
-    // Limite do banco: `task_assign` atribui a auth.uid() e nao aceita
-    // destinatario. Recusar e melhor do que atribuir a si mesmo em silencio.
+  it('atribui a um COLEGA numa unica mutacao', async () => {
     const t = await criarPelaApi({ title: 'Para o Joao' })
-    const r = await maria<{ message: string }>('POST', `/tasks/${t.id}/assign`, {
+    const r = await maria<Task>('POST', `/tasks/${t.id}/assign`, {
       assigneeId: c.joao.userId,
       expectedVersion: t.version,
     })
-    expect(r.status).toBe(400)
+
+    expect(r.status).toBe(200)
+    expect(r.json.assignedTo).toBe(c.joao.userId)
+    // Uma intencao humana, uma versao. Nada de assumir-e-transferir.
+    expect(r.json.version).toBe(2)
+    expect(await contarEventos(t.id, 'assigned')).toBe(1)
+    expect(await contarEventos(t.id, 'transferred')).toBe(0)
+  })
+
+  it('o detalhe devolve o assignee correto depois de atribuir a colega', async () => {
+    const t = await criarPelaApi({ title: 'Detalhe do colega' })
+    await maria('POST', `/tasks/${t.id}/assign`, {
+      assigneeId: c.joao.userId,
+      expectedVersion: t.version,
+    })
+    const r = await maria<TaskDetail>('GET', `/tasks/${t.id}`)
+    expect(r.json.assignee).toEqual({ userId: c.joao.userId, displayName: 'Colega JOAO' })
+    // Quem consultou foi a Maria: a pendencia e do Joao, nao dela.
+    expect(r.json.isMine).toBe(false)
+  })
+
+  it('ATOR e quem executou; metadata.to e quem recebeu', async () => {
+    const t = await criarPelaApi({ title: 'Ator x destinatario' })
+    await maria('POST', `/tasks/${t.id}/assign`, {
+      assigneeId: c.joao.userId,
+      expectedVersion: t.version,
+    })
+
+    const ev = (await eventosDe(c.admin, t.id)).find((e) => e.event_type === 'assigned')!
+    // Sao pessoas diferentes, e confundi-las faria o historico dizer que o Joao
+    // se atribuiu sozinho — quando quem decidiu foi a Maria.
+    expect(ev.actor_user_id).toBe(c.maria.userId)
+    expect(ev.actor_name_snapshot).toBe('Usuario MARIA')
+    expect(ev.metadata).toEqual({
+      to: { userId: c.joao.userId, displayName: 'Colega JOAO' },
+    })
+  })
+
+  it('destinatario de outra clinica responde igual a inexistente', async () => {
+    const t = await criarPelaApi({ title: 'Destino de fora' })
+    const alheio = await maria('POST', `/tasks/${t.id}/assign`, {
+      assigneeId: c.bruno.userId,
+      expectedVersion: t.version,
+    })
+    const inexistente = await maria('POST', `/tasks/${t.id}/assign`, {
+      assigneeId: UUID_INEXISTENTE,
+      expectedVersion: t.version,
+    })
+
+    expect(alheio.status).toBe(404)
+    // Byte a byte: dizer "existe, mas nao e daqui" revelaria uma conta de outra
+    // clinica a quem so tem um uuid na mao.
+    expect(alheio.body).toBe(inexistente.body)
     expect((await lerTask(c.admin, t.id))?.assigned_to).toBeNull()
+  })
+
+  it('duas atribuicoes simultaneas a destinos diferentes: uma vence', async () => {
+    const t = await criarPelaApi({ title: 'Disputa de destino' })
+    const [x, y] = await Promise.all([
+      maria('POST', `/tasks/${t.id}/assign`, {
+        assigneeId: c.maria.userId,
+        expectedVersion: t.version,
+      }),
+      joao('POST', `/tasks/${t.id}/assign`, {
+        assigneeId: c.joao.userId,
+        expectedVersion: t.version,
+      }),
+    ])
+
+    const oks = [x, y].filter((r) => r.status === 200)
+    const conflitos = [x, y].filter(
+      (r) => r.status === 409 && (r.json as { error?: string }).error === 'task_conflict',
+    )
+    expect(oks).toHaveLength(1)
+    expect(conflitos).toHaveLength(1)
+
+    const linha = await lerTask(c.admin, t.id)
+    expect(linha?.version).toBe(2)
+    // O responsavel final e o do vencedor, e nao uma mistura dos dois.
+    expect([c.maria.userId, c.joao.userId]).toContain(linha?.assigned_to)
+    expect(await contarEventos(t.id, 'assigned')).toBe(1)
+  })
+
+  it('remover o membership depois zera o responsavel e preserva o snapshot', async () => {
+    const t = await criarPelaApi({ title: 'Colega vai sair' })
+    await maria('POST', `/tasks/${t.id}/assign`, {
+      assigneeId: c.joao.userId,
+      expectedVersion: t.version,
+    })
+
+    await c.admin
+      .from('clinic_members')
+      .delete()
+      .eq('clinic_id', c.maria.clinicId)
+      .eq('user_id', c.joao.userId)
+
+    expect((await lerTask(c.admin, t.id))?.assigned_to).toBeNull()
+    const ev = (await eventosDe(c.admin, t.id)).find((e) => e.event_type === 'assigned')!
+    // O estado atual perde o vinculo; o historico nao.
+    expect(ev.metadata).toMatchObject({ to: { userId: c.joao.userId, displayName: 'Colega JOAO' } })
+
+    await c.admin
+      .from('clinic_members')
+      .insert({ clinic_id: c.maria.clinicId, user_id: c.joao.userId, role: 'attendant' })
   })
 })
 

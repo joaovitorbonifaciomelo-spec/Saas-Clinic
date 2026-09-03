@@ -12,7 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import pg from 'pg'
 import type { Page, TaskListItem } from '@clinicas/shared'
-import { montarCenario, novaTask, assumir, type Cenario, registrarLimpeza } from './task-helpers'
+import { montarCenario, novaTask, atribuir, type Cenario, registrarLimpeza } from './task-helpers'
 
 let c: Cenario
 let db: pg.Client
@@ -95,7 +95,7 @@ describe('numero de consultas nao cresce com a pagina', () => {
         title: `Carga ${n}`,
         patientId: c.maria.patientId,
       })
-      await assumir(c.maria.db, t)
+      await atribuir(c.maria.db, t, c.maria.userId)
     }
   }, 180_000)
 
@@ -145,7 +145,7 @@ describe('numero de consultas nao cresce com a pagina', () => {
       title: 'Detalhe com contexto',
       patientId: c.maria.patientId,
     })
-    await assumir(c.maria.db, t)
+    await atribuir(c.maria.db, t, c.maria.userId)
 
     const chamar = async () => {
       const r = await fetch(`${c.env.apiUrl}/api/tasks/${t.id}`, {
@@ -174,7 +174,7 @@ describe('numero de consultas nao cresce com a pagina', () => {
 
   it('os eventos custam duas consultas: existencia e pagina', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Eventos medidos' })
-    await assumir(c.maria.db, t)
+    await atribuir(c.maria.db, t, c.maria.userId)
 
     const chamar = async () => {
       const r = await fetch(`${c.env.apiUrl}/api/tasks/${t.id}/events`, {

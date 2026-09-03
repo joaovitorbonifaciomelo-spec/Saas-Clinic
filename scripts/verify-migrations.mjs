@@ -1324,7 +1324,7 @@ try {
 
   await afirma('assumir com versao correta funciona e gera evento', async () => {
     const t = (await novaTask(userA, clinicA, { title: 'Assumir esta' })).task
-    const r = await chamarT(userA, 'task_assign', [t.id, t.version])
+    const r = await chamarT(userA, 'task_assign', [t.id, t.version, userA])
     const { rows } = await db.query(
       "select metadata from public.task_events where task_id = $1 and event_type = 'assigned'",
       [t.id],
@@ -1339,8 +1339,8 @@ try {
 
   await afirma('dois assumires simultaneos: um ok, um conflito', async () => {
     const t = (await novaTask(userA, clinicA, { title: 'Disputada' })).task
-    const primeiro = await chamarT(userA, 'task_assign', [t.id, t.version])
-    const segundo = await chamarT(userA2, 'task_assign', [t.id, t.version])
+    const primeiro = await chamarT(userA, 'task_assign', [t.id, t.version, userA])
+    const segundo = await chamarT(userA2, 'task_assign', [t.id, t.version, userA2])
     return primeiro.outcome === 'ok' && segundo.outcome === 'conflict'
   })
 
@@ -1509,7 +1509,7 @@ try {
 
   await afirma('remover membership devolve a tarefa a fila sem bloquear', async () => {
     const t = (await novaTask(userA, clinicA, { title: 'Do a2' })).task
-    await chamarT(userA2, 'task_assign', [t.id, t.version])
+    await chamarT(userA2, 'task_assign', [t.id, t.version, userA2])
     await db.query('delete from public.clinic_members where clinic_id = $1 and user_id = $2', [
       clinicA,
       userA2,
@@ -1570,12 +1570,12 @@ try {
       [clinicA, ex],
     )
     const t = (await novaTask(userA, clinicA, { title: 'Vazamento?' })).task
-    await chamarT(userA, 'task_assign', [t.id, t.version])
+    await chamarT(userA, 'task_assign', [t.id, t.version, userA])
     await db.query('delete from public.clinic_members where clinic_id = $1 and user_id = $2', [
       clinicA,
       ex,
     ])
-    const r = await chamarT(ex, 'task_assign', [t.id, t.version])
+    const r = await chamarT(ex, 'task_assign', [t.id, t.version, ex])
     return r.outcome === 'not_found' && r.task === undefined
   })
 
@@ -1593,8 +1593,88 @@ try {
 
   await afirma('transferir para nao-membro devolve not_found', async () => {
     const t = (await novaTask(userA, clinicA, { title: 'Transferir' })).task
-    const r = await chamarT(userA, 'task_transfer', [t.id, t.version, userB])
+    const minha = await chamarT(userA, 'task_assign', [t.id, t.version, userA])
+    const r = await chamarT(userA, 'task_transfer', [minha.task.id, minha.task.version, userB])
     return r.outcome === 'not_found'
+  })
+
+  await afirma('sem responsavel, transferir responde not_assigned antes do destino', async () => {
+    // A ordem importa para a MENSAGEM: quem tenta transferir uma pendencia da
+    // fila geral precisa saber que a operacao certa e atribuir — e nao que o
+    // destinatario esta errado, que e verdade mas nao ajuda.
+    const t = (await novaTask(userA, clinicA, { title: 'Sem dono, destino ruim' })).task
+    const r = await chamarT(userA, 'task_transfer', [t.id, t.version, userB])
+    return r.outcome === 'invalid_state' && r.reason === 'not_assigned'
+  })
+
+  await afirma('atribuir a OUTRO membro funciona numa unica mutacao', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Para o colega' })).task
+    const r = await chamarT(userA, 'task_assign', [t.id, t.version, userA2])
+    const eventos = await db.query(
+      "select event_type, actor_user_id, metadata from public.task_events where task_id = $1 and event_type = 'assigned'",
+      [t.id],
+    )
+    const ev = eventos.rows[0]
+    return (
+      r.outcome === 'ok' &&
+      r.task.assignedTo === userA2 &&
+      // Uma intencao, uma versao: nada de assumir-e-transferir.
+      r.task.version === 2 &&
+      eventos.rows.length === 1 &&
+      // ATOR e quem executou; DESTINATARIO e quem recebeu. Sao pessoas
+      // diferentes, e o evento registra as duas separadamente.
+      ev.actor_user_id === userA &&
+      ev.metadata.to.userId === userA2
+    )
+  })
+
+  await afirma('atribuir a nao-membro devolve not_found, sem revelar existencia', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Destino de fora' })).task
+    const alheio = await chamarT(userA, 'task_assign', [t.id, t.version, userB])
+    const inexistente = await chamarT(userA, 'task_assign', [
+      t.id,
+      t.version,
+      '00000000-0000-4000-8000-000000000000',
+    ])
+    return (
+      JSON.stringify(alheio) === JSON.stringify(inexistente) && alheio.outcome === 'not_found'
+    )
+  })
+
+  await afirma('duas atribuicoes simultaneas a destinos diferentes: uma vence', async () => {
+    const t = (await novaTask(userA, clinicA, { title: 'Disputa de destino' })).task
+    const paraA = await chamarT(userA, 'task_assign', [t.id, t.version, userA])
+    const paraA2 = await chamarT(userA2, 'task_assign', [t.id, t.version, userA2])
+
+    const { rows } = await db.query('select assigned_to, version from public.tasks where id = $1', [
+      t.id,
+    ])
+    const eventos = await db.query(
+      "select count(*)::int as n from public.task_events where task_id = $1 and event_type = 'assigned'",
+      [t.id],
+    )
+    const oks = [paraA, paraA2].filter((r) => r.outcome === 'ok').length
+    const conflitos = [paraA, paraA2].filter((r) => r.outcome === 'conflict').length
+
+    return (
+      oks === 1 &&
+      conflitos === 1 &&
+      rows[0].version === 2 &&
+      eventos.rows[0].n === 1 &&
+      // O responsavel final e o do vencedor, e nao uma mistura dos dois.
+      [userA, userA2].includes(rows[0].assigned_to)
+    )
+  })
+
+  await afirma('existe exatamente UMA task_assign publica, sem overload antigo', async () => {
+    const { rows } = await db.query(
+      `select p.oid::regprocedure::text as sig
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = 'task_assign'`,
+    )
+    // Acrescentar parametro NAO substitui a funcao: sem o drop explicito, a
+    // assinatura de dois argumentos continuaria publica com a semantica velha.
+    return rows.length === 1 && rows[0].sig === 'task_assign(uuid,integer,uuid)'
   })
 
   // ===========================================================================
@@ -1611,7 +1691,7 @@ try {
     const t = await tarefaConcluida('Congelada')
     const rs = [
       await chamarT(userA, 'task_update_details', [t.id, t.version, 'Outro titulo', null, false]),
-      await chamarT(userA, 'task_assign', [t.id, t.version]),
+      await chamarT(userA, 'task_assign', [t.id, t.version, userA]),
       await chamarT(userA, 'task_transfer', [t.id, t.version, userA2]),
       await chamarT(userA, 'task_release', [t.id, t.version]),
       await chamarT(userA, 'task_set_due', [t.id, t.version, '2027-01-01T10:00:00Z']),
@@ -1634,7 +1714,7 @@ try {
   await afirma('depois de reabrir, as demais voltam a ser permitidas', async () => {
     const t = await tarefaConcluida('Volta ao normal')
     const reaberta = (await chamarT(userA, 'task_reopen', [t.id, t.version])).task
-    const r = await chamarT(userA, 'task_assign', [reaberta.id, reaberta.version])
+    const r = await chamarT(userA, 'task_assign', [reaberta.id, reaberta.version, userA])
     return r.outcome === 'ok' && r.task.assignedTo === userA
   })
 
@@ -1655,8 +1735,8 @@ try {
 
   await afirma('assumir tarefa que ja tem dono: invalid_state, sem sobrescrever', async () => {
     const t = (await novaTask(userA, clinicA, { title: 'Ja tem dono' })).task
-    const a = await chamarT(userA, 'task_assign', [t.id, t.version])
-    const r = await chamarT(userA2, 'task_assign', [a.task.id, a.task.version])
+    const a = await chamarT(userA, 'task_assign', [t.id, t.version, userA])
+    const r = await chamarT(userA2, 'task_assign', [a.task.id, a.task.version, userA2])
     const { rows } = await db.query('select assigned_to from public.tasks where id = $1', [t.id])
     return (
       r.outcome === 'invalid_state' &&
@@ -1676,7 +1756,7 @@ try {
 
   await afirma('transferir para o mesmo responsavel e no-op', async () => {
     const t = (await novaTask(userA, clinicA, { title: 'Mesmo dono' })).task
-    const a = await chamarT(userA, 'task_assign', [t.id, t.version])
+    const a = await chamarT(userA, 'task_assign', [t.id, t.version, userA])
     const r = await chamarT(userA, 'task_transfer', [a.task.id, a.task.version, userA])
     const ev = await db.query(
       "select count(*)::int as n from public.task_events where task_id = $1 and event_type = 'transferred'",
@@ -1848,7 +1928,7 @@ try {
     const publicas = [
       'public.task_create(uuid, text, text, timestamptz, uuid, uuid, uuid, uuid)',
       'public.task_update_details(uuid, integer, text, text, boolean)',
-      'public.task_assign(uuid, integer)',
+      'public.task_assign(uuid, integer, uuid)',
       'public.task_transfer(uuid, integer, uuid)',
       'public.task_release(uuid, integer)',
       'public.task_set_due(uuid, integer, timestamptz)',

@@ -170,8 +170,16 @@ export async function novaTask(
   return r.task
 }
 
-export const assumir = (db: SupabaseClient, t: TaskRow) =>
-  rpc(db, 'task_assign', { p_task_id: t.id, p_expected_version: t.version })
+/**
+ * Atribuir a alguem EXPLICITO. Sem destinatario, atribui a quem chama — que e
+ * o caso mais comum nos testes, e continua sendo uma escolha declarada.
+ */
+export const atribuir = (db: SupabaseClient, t: TaskRow, para: string) =>
+  rpc(db, 'task_assign', {
+    p_task_id: t.id,
+    p_expected_version: t.version,
+    p_assignee_id: para,
+  })
 
 export const transferir = (db: SupabaseClient, t: TaskRow, para: string) =>
   rpc(db, 'task_transfer', {

@@ -444,6 +444,47 @@ for (const nome of [...EXPOSED_FUNCTIONS, ...INTERNAL_FUNCTIONS]) {
   if (!fns.rows.some((r) => r.proname === nome)) fail(`funcao ausente no banco: ${nome}`)
 }
 
+/*
+ * ASSINATURA EXATA, e nao so o nome.
+ *
+ * Acrescentar um parametro a uma funcao NAO a substitui: o PostgreSQL a
+ * identifica por nome + tipos, entao `create or replace` com um argumento a
+ * mais cria uma SEGUNDA funcao. As duas ficam publicas, a antiga continua
+ * executavel com a semantica velha, e ninguem percebe — porque o cliente novo
+ * nunca a chama.
+ *
+ * `task_assign` passou exatamente por essa troca (dois argumentos -> tres).
+ * Conferir a assinatura e contar as sobrecargas e o que denuncia um drop
+ * esquecido.
+ */
+const ASSINATURAS_ESPERADAS = {
+  task_assign: 'task_assign(uuid,integer,uuid)',
+  task_transfer: 'task_transfer(uuid,integer,uuid)',
+  task_create: 'task_create(uuid,text,text,timestamp with time zone,uuid,uuid,uuid,uuid)',
+  task_update_details: 'task_update_details(uuid,integer,text,text,boolean)',
+  task_release: 'task_release(uuid,integer)',
+  task_set_due: 'task_set_due(uuid,integer,timestamp with time zone)',
+  task_complete: 'task_complete(uuid,integer)',
+  task_cancel: 'task_cancel(uuid,integer)',
+  task_reopen: 'task_reopen(uuid,integer)',
+}
+
+console.log('')
+console.log('  ASSINATURAS DAS RPCS DE PENDENCIAS')
+console.log('  ' + '-'.repeat(64))
+for (const [nome, esperada] of Object.entries(ASSINATURAS_ESPERADAS)) {
+  const encontradas = fns.rows.filter((r) => r.proname === nome)
+  const sigs = encontradas.map((r) => r.sig)
+  console.log(`    ${nome.padEnd(24)} ${sigs.join(' | ') || '(ausente)'}`)
+
+  if (encontradas.length > 1) {
+    fail(`${nome} tem ${encontradas.length} sobrecargas: ${sigs.join(' | ')}`)
+  }
+  if (encontradas.length === 1 && sigs[0] !== esperada) {
+    fail(`${nome}: assinatura ${sigs[0]} — esperada ${esperada}`)
+  }
+}
+
 // --- Trigger em auth.users ---------------------------------------------------
 const trigger = await client.query(
   `select tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid

@@ -7,7 +7,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
-  assumir,
+  atribuir,
   cancelar,
   concluir,
   definirPrazo,
@@ -83,7 +83,7 @@ describe('um evento por operacao', () => {
 
   it('cada operacao de controle gera o seu evento, na ordem', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Ciclo completo' })
-    const a = (await assumir(c.maria.db, t)).task!
+    const a = (await atribuir(c.maria.db, t, c.maria.userId)).task!
     const tr = (await transferir(c.maria.db, a, c.joao.userId)).task!
     const rl = (await devolver(c.maria.db, tr)).task!
     const dd = (await definirPrazo(c.maria.db, rl, new Date(Date.now() + 3_600_000).toISOString()))
@@ -141,7 +141,7 @@ describe('metadata por tipo', () => {
 
   it('assigned, transferred e released guardam snapshot do responsavel', async () => {
     const t = await novaTask(c.maria.db, c.maria.clinicId, { title: 'Snapshots' })
-    const a = (await assumir(c.maria.db, t)).task!
+    const a = (await atribuir(c.maria.db, t, c.maria.userId)).task!
     const tr = (await transferir(c.maria.db, a, c.joao.userId)).task!
     await devolver(c.maria.db, tr)
 

@@ -479,29 +479,21 @@ export class TasksService {
   }
 
   /**
-   * Atribuir uma pendencia da fila geral.
+   * Atribuir uma pendencia da fila geral a um membro EXPLICITO.
    *
-   * LIMITE DO BANCO, dito com clareza: `task_assign(id, versao)` atribui a
-   * `auth.uid()` — nao aceita destinatario. Entao esta rota so atende "atribuir
-   * a mim mesmo". Dar a OUTRA pessoa uma pendencia sem dono exigiria um
-   * parametro novo na RPC, ou seja, uma migration — que esta rodada nao
-   * autoriza.
+   * `auth.uid()` continua sendo quem EXECUTA; `assigneeId` e quem RECEBE — duas
+   * responsabilidades diferentes, e o evento `assigned` registra as duas
+   * separadamente.
    *
-   * A recusa e 400 explicito, e nao um sucesso parcial: aceitar o `assigneeId`
-   * e atribuir a si mesmo seria a API mentindo sobre o que fez. Enquanto isso,
-   * passar a tarefa a um colega continua possivel em duas etapas — assumir e
-   * transferir —, e as duas ficam no historico.
+   * O destinatario e validado contra `clinic_members` DENTRO da RPC. A API nao
+   * e a unica guarda: uma checagem que so existe aqui vale enquanto todo mundo
+   * passar por aqui.
    */
-  assign(userId: string, id: string, input: AssignTaskInput): Promise<Task> {
-    if (input.assigneeId !== userId) {
-      throw new BadRequestException(
-        'Nesta versao, atribuir e sempre para si mesmo. Para passar a outra ' +
-          'pessoa, assuma e depois transfira.',
-      )
-    }
+  assign(id: string, input: AssignTaskInput): Promise<Task> {
     return this.controlar('task_assign', {
       p_task_id: id,
       p_expected_version: input.expectedVersion,
+      p_assignee_id: input.assigneeId,
     })
   }
 
