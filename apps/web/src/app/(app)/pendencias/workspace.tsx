@@ -95,11 +95,16 @@ export function PendenciasWorkspace({
           equipe={equipe}
           timezone={timezone}
           onFechar={() => setNovaAberta(false)}
-          onCriada={(id) => {
+          onCriada={() => {
+            /*
+             * Fecha o formulario, atualiza a lista e fica nela — nao abre o
+             * detalhe sozinho. Quem criou decide se quer ver a pendencia
+             * agora ou continuar criando/trabalhando na fila; abrir por conta
+             * propria seria decidir por ela.
+             */
             setNovaAberta(false)
-            router.push(`/pendencias?${visao !== 'today' ? `v=${visao}&` : ''}id=${id}`, {
-              scroll: false,
-            })
+            setAviso('Pendência criada.')
+            router.refresh()
           }}
         />
       ) : null}

@@ -179,8 +179,10 @@ describe('entrada no modulo', () => {
    Criacao
    ======================================================================== */
 describe('criar pendência', () => {
-  it('pendência geral, sem contexto, aparece na lista', async () => {
-    const page = await abrirPendencias(maria.ctx)
+  it('fecha o formulário, atualiza a lista e avisa — sem abrir o detalhe sozinho', async () => {
+    // Sem prazo: precisa da visao "Sem prazo" pra aparecer na lista, mesma
+    // razao de todo o resto do arquivo.
+    const page = await abrirPendencias(maria.ctx, '?v=undated')
     const titulo = `Revisar encaixes ${registry.testRunId.slice(0, 6)}`
 
     await page.click('button:has-text("Nova pendência")')
@@ -188,18 +190,16 @@ describe('criar pendência', () => {
     await page.fill('.pd-drawer input:not([type])', titulo)
     await page.click('.pd-drawer button:has-text("Criar pendência")')
 
-    await page.waitForSelector('.pd-drawer-titulo', { timeout: 30_000 })
-    expect(await page.locator('.pd-drawer-titulo').innerText()).toBe(titulo)
-    // Sem paciente, conversa ou agendamento: o drawer diz isso explicitamente,
-    // em vez de deixar um espaco em branco que parece dado faltando.
-    expect(await page.locator('.pd-drawer-corpo').innerText()).toContain(
-      'Pendência geral da clínica',
-    )
+    await page.waitForSelector('.pd-aviso:has-text("Pendência criada")', { timeout: 30_000 })
+    await page.waitForSelector(`.pd-item-titulo:has-text("${titulo}")`, { timeout: 30_000 })
+
+    // O detalhe NAO abre sozinho: quem criou decide se quer ve-lo.
+    expect(await page.locator('.pd-drawer-titulo').count()).toBe(0)
     await page.close()
   })
 
-  it('com paciente vinculado, mostra o contexto e o link para o paciente', async () => {
-    const page = await abrirPendencias(maria.ctx)
+  it('com paciente vinculado: contexto aparece na lista, link ao paciente ao abrir manualmente', async () => {
+    const page = await abrirPendencias(maria.ctx, '?v=undated')
     const titulo = `Cobrar exame ${registry.testRunId.slice(0, 6)}`
 
     await page.click('button:has-text("Nova pendência")')
@@ -216,9 +216,16 @@ describe('criar pendência', () => {
 
     await page.click('.pd-drawer button:has-text("Criar pendência")')
 
+    await page.waitForSelector('.pd-aviso:has-text("Pendência criada")', { timeout: 30_000 })
+    expect(await page.locator('.pd-drawer-titulo').count()).toBe(0)
+
+    const linha = page.locator('.pd-item', { has: page.locator(`.pd-item-titulo:has-text("${titulo}")`) })
+    await linha.waitFor({ timeout: 30_000 })
+    expect(await linha.locator('.pd-item-contexto').innerText()).toBe('Joana Ribeiro')
+
+    // Abrindo manualmente, o link para o paciente continua la.
+    await linha.locator('.pd-item-titulo').click()
     await page.waitForSelector('.pd-drawer-titulo', { timeout: 30_000 })
-    const corpo = page.locator('.pd-drawer-corpo')
-    expect(await corpo.innerText()).toContain('Joana Ribeiro')
     expect(await page.locator('a:has-text("Ver paciente")').count()).toBe(1)
     await page.close()
   })
