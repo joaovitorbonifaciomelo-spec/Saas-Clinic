@@ -4054,14 +4054,31 @@ th.num {
   gap: 4px;
   padding: 0 var(--s3) var(--s3);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  /* Assenta numa aba inteira ao soltar o dedo/scroll, nunca a meio caminho
+     — e o que faz o scroll "parecer" nativo em vez de so tecnicamente
+     funcionar. */
+  scroll-snap-type: x proximity;
   border-bottom: 1px solid var(--line-soft);
+  /* Esmaece as duas pontas em vez de cortar a ultima aba em cima da borda:
+     sinaliza "tem mais pra rolar" em vez de parecer rotulo quebrado. */
+  mask-image: linear-gradient(to right, transparent, black var(--s3), black calc(100% - var(--s3)), transparent);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--s3),
+    black calc(100% - var(--s3)),
+    transparent
+  );
 }
 .pd-visoes::-webkit-scrollbar {
   display: none;
 }
 .pd-visao {
   flex: none;
+  scroll-snap-align: start;
   padding: 5px 11px;
   border-radius: 999px;
   font-size: 12.5px;
@@ -4139,11 +4156,14 @@ th.num {
 }
 
 .pd-vazio {
-  padding: var(--s6) var(--s4);
+  /* Compacto de proposito: isto e uma fila operacional, nao uma pagina de
+     boas-vindas — o estado vazio nao deveria pedir mais espaco que uma
+     linha normal da lista. */
+  padding: var(--s4) var(--s4);
   text-align: center;
   display: flex;
   flex-direction: column;
-  gap: var(--s2);
+  gap: var(--s1);
   align-items: center;
 }
 .pd-vazio-titulo {
