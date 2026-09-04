@@ -142,7 +142,7 @@ export default async function TodayPage() {
           da tela e a direita seguia sozinha por mais 300px.
         */}
         <div className="today-col">
-          <section className="card">
+          <section className="card today-agenda">
             <div className="card-head">
               <h2>Agenda de hoje</h2>
               <Link href={`/agenda?date=${today}`} className="btn ghost sm">
@@ -157,7 +157,7 @@ export default async function TodayPage() {
             contador, nenhum aviso, nenhum modulo futuro disfarcado de atalho —
             atalho para tela inexistente e promessa quebrada no clique.
           */}
-          <section className="card">
+          <section className="card today-acoes">
             <div className="card-head">
               <h2>Ações rápidas</h2>
             </div>
@@ -197,7 +197,7 @@ export default async function TodayPage() {
         </div>
 
         <div className="today-col">
-          <section className="card">
+          <section className="card today-atencao">
             <div className="card-head">
               <h2>Precisa da sua atenção</h2>
               {precisaAtencao.length > 0 ? (
@@ -277,7 +277,7 @@ export default async function TodayPage() {
             )}
           </section>
 
-          <section className="card">
+          <section className="card today-profissionais">
             <div className="card-head">
               <h2>Profissionais ativos</h2>
               <span className="faint tabular">{professionals.length}</span>

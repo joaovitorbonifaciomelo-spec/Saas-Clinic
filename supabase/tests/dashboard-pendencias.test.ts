@@ -125,16 +125,22 @@ describe('"Precisa da sua atenção" sem nenhuma pendência', () => {
 describe('"Precisa da sua atenção" com pendências', () => {
   it('Atrasadas antes de Hoje, no máximo 3, atrasada destacada, "Ver todas" quando há mais', async () => {
     const { startOfToday } = dayBoundsInTimezone(fuso, new Date())
-    const ontem = new Date(startOfToday.getTime() - 3_600_000).toISOString()
-    const hoje = new Date().toISOString()
+    // Prazos DISTINTOS em cada grupo: a API desempata por id (uuid, sem
+    // relacao com ordem de criacao) quando due_at repete, entao usar o mesmo
+    // instante pros tres "de hoje" tornaria a ordem imprevisivel.
+    const ontem1 = new Date(startOfToday.getTime() - 4_600_000).toISOString()
+    const ontem2 = new Date(startOfToday.getTime() - 3_600_000).toISOString()
+    const hoje1 = new Date().toISOString()
+    const hoje2 = new Date(Date.now() + 60_000).toISOString()
+    const hoje3 = new Date(Date.now() + 120_000).toISOString()
 
     // 2 atrasadas + 3 de hoje = 5 no total. Com o limite de 3 (atrasadas
     // primeiro), esperado: as 2 atrasadas + 1 de hoje, com "Ver todas".
-    await criarTask('Atrasada Um', ontem)
-    await criarTask('Atrasada Dois', ontem)
-    await criarTask('Hoje Um', hoje)
-    await criarTask('Hoje Dois', hoje)
-    await criarTask('Hoje Três', hoje)
+    await criarTask('Atrasada Um', ontem1)
+    await criarTask('Atrasada Dois', ontem2)
+    await criarTask('Hoje Um', hoje1)
+    await criarTask('Hoje Dois', hoje2)
+    await criarTask('Hoje Três', hoje3)
 
     const page = await abrirDashboard()
     const cartao = page.locator('.card', { has: page.locator('h2', { hasText: 'Precisa da sua atenção' }) })

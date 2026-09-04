@@ -2894,6 +2894,33 @@ th.num {
   gap: var(--s4);
   min-width: 0;
 }
+/*
+  So no mobile (mesmo ponto de corte em que a sidebar vira barra inferior):
+  reordena os quatro cards de "Hoje" sem tocar em conteudo/comportamento.
+  Fica DEPOIS da regra base de .today-col de proposito — media query nao
+  ganha de graca contra uma regra da mesma especificidade que vem depois no
+  arquivo, entao esta precisa vir por ultimo pra vencer a cascata.
+  .today-col vira display:contents pra promover os cards a itens diretos do
+  grid — assim cada um pode ter seu proprio `order`, em vez de ficar preso a
+  ordem da coluna que o envolve. No desktop (>768px) nada disto se aplica.
+*/
+@media (max-width: 768px) {
+  .today-col {
+    display: contents;
+  }
+  .today-atencao {
+    order: 1;
+  }
+  .today-agenda {
+    order: 2;
+  }
+  .today-acoes {
+    order: 3;
+  }
+  .today-profissionais {
+    order: 4;
+  }
+}
 
 /* =============================================================================
    ESTADO PENDENTE
