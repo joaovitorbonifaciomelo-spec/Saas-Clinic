@@ -4057,20 +4057,42 @@ th.num {
   overflow-y: hidden;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  /* Assenta numa aba inteira ao soltar o dedo/scroll, nunca a meio caminho
-     — e o que faz o scroll "parecer" nativo em vez de so tecnicamente
-     funcionar. */
-  scroll-snap-type: x proximity;
+  /*
+    Mandatory, nao proximity: o scroll SO para numa aba inteira, nunca a
+    meio caminho. scroll-snap-stop:always em cada aba (abaixo) impede que um
+    gesto rapido pule por cima de uma aba parcialmente visivel sem parar
+    nela primeiro.
+  */
+  scroll-snap-type: x mandatory;
   border-bottom: 1px solid var(--line-soft);
-  /* Esmaece as duas pontas em vez de cortar a ultima aba em cima da borda:
-     sinaliza "tem mais pra rolar" em vez de parecer rotulo quebrado. */
-  mask-image: linear-gradient(to right, transparent, black var(--s3), black calc(100% - var(--s3)), transparent);
+  /*
+    --pd-corte: largura, em px, da aba que esta parcialmente visivel na
+    borda direita AGORA — calculada em lista.tsx (mede as abas de verdade,
+    o CSS sozinho nao sabe onde uma palavra corta). Zero quando nenhuma aba
+    esta cortada (por exemplo, depois de rolar ate o fim, onde a ultima aba
+    assenta inteira). O mask some com essa aba INTEIRA em vez de so
+    esmaecer a borda — meio rotulo legivel nunca e uma opcao.
+  */
+  --pd-corte: 0px;
+  /*
+    A transicao para transparente TERMINA exatamente onde a aba cortada
+    COMECA (100% - var(--pd-corte)) — nao 12px depois dela. Assim a aba
+    cortada inteira cai na parte ja transparente do gradiente, em vez de
+    nascer no meio de um fade ainda opaco o bastante pra dar pra ler.
+  */
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--s3),
+    black calc(100% - var(--pd-corte) - var(--s2)),
+    transparent calc(100% - var(--pd-corte))
+  );
   -webkit-mask-image: linear-gradient(
     to right,
     transparent,
     black var(--s3),
-    black calc(100% - var(--s3)),
-    transparent
+    black calc(100% - var(--pd-corte) - var(--s2)),
+    transparent calc(100% - var(--pd-corte))
   );
 }
 .pd-visoes::-webkit-scrollbar {
@@ -4079,12 +4101,18 @@ th.num {
 .pd-visao {
   flex: none;
   scroll-snap-align: start;
+  scroll-snap-stop: always;
   padding: 5px 11px;
   border-radius: 999px;
   font-size: 12.5px;
   color: var(--muted);
   white-space: nowrap;
   border: 1px solid transparent;
+}
+/* A ultima ancora pelo FIM: rolar ate o fim sempre para com ela inteira na
+   tela, nunca cortada contra a borda direita do container. */
+.pd-visao:last-child {
+  scroll-snap-align: end;
 }
 .pd-visao:hover {
   background: var(--surface-hover);

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { TASK_STATUS_LABELS, type TaskListItem, type TaskView } from '@clinicas/shared'
@@ -41,8 +41,45 @@ export function Lista({
   const [carregando, setCarregando] = useState(false)
   const [concluindoId, setConcluindoId] = useState<string | null>(null)
   const [, startTransition] = useTransition()
+  const visoesRef = useRef<HTMLDivElement>(null)
 
   const lista = [...itens, ...extras]
+
+  /*
+   * Abas de visao no mobile: nenhuma pode aparecer cortada no meio do
+   * rotulo. O CSS sozinho nao sabe onde uma palavra termina — so medindo as
+   * abas de verdade da pra saber se a que esta na borda direita cabe
+   * inteira ou nao. Quando NAO cabe, --pd-corte vira a largura dela: o mask
+   * em .pd-visoes (globals.css) some com ela POR INTEIRO, nunca so a ponta.
+   * Roda de novo a cada scroll/resize porque a aba que fica na borda muda.
+   */
+  useEffect(() => {
+    const el = visoesRef.current
+    if (!el) return
+
+    function recalcular(): void {
+      if (!el) return
+      const { clientWidth, scrollLeft } = el
+      let corte = 0
+      for (const aba of Array.from(el.children) as HTMLElement[]) {
+        const inicio = aba.offsetLeft - scrollLeft
+        const fim = inicio + aba.offsetWidth
+        if (inicio < clientWidth && fim > clientWidth) {
+          corte = clientWidth - inicio
+          break
+        }
+      }
+      el.style.setProperty('--pd-corte', `${corte}px`)
+    }
+
+    recalcular()
+    el.addEventListener('scroll', recalcular, { passive: true })
+    window.addEventListener('resize', recalcular)
+    return () => {
+      el.removeEventListener('scroll', recalcular)
+      window.removeEventListener('resize', recalcular)
+    }
+  }, [])
 
   function paramsCom(mudanca: Record<string, string | undefined>): string {
     const p = new URLSearchParams()
@@ -86,7 +123,7 @@ export function Lista({
         </button>
       </div>
 
-      <div className="pd-visoes" role="tablist" aria-label="Filtrar pendências">
+      <div className="pd-visoes" role="tablist" aria-label="Filtrar pendências" ref={visoesRef}>
         {PENDENCIAS_VISOES_UI.map(({ chave, rotulo }) => (
           <Link
             key={chave}
