@@ -41,6 +41,7 @@ export default defineConfig({
             // padrao.
             'tests/tasks-*.test.ts',
             'tests/pendencias-ui.test.ts',
+            'tests/dashboard-pendencias.test.ts',
           ],
           testTimeout: 60_000,
           hookTimeout: 120_000,
@@ -82,6 +83,7 @@ export default defineConfig({
             'tests/atendimento-ui.test.ts',
             'tests/agenda-mes.test.ts',
             'tests/pendencias-ui.test.ts',
+            'tests/dashboard-pendencias.test.ts',
           ],
           testTimeout: 120_000,
           hookTimeout: 180_000,

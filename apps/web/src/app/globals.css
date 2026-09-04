@@ -2478,6 +2478,18 @@ tbody tr:hover {
   color: var(--muted);
 }
 
+/* Pendencia atrasada dentro de "Precisa da sua atencao": so o prazo muda de
+   cor — discreto de proposito, o mesmo peso visual de .pd-item-prazo.is-
+   atrasado em /pendencias, sem badge nem fundo colorido. */
+.attn-prazo-atrasado {
+  color: var(--danger);
+  font-weight: 600;
+}
+.attn-mais {
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--line-soft);
+}
+
 /* --- Hoje: acoes rapidas ---------------------------------------------------
    Somente navegacao para telas que existem. Nenhum contador, nenhum aviso. */
 .quick-actions {

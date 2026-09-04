@@ -2,11 +2,14 @@ import Link from 'next/link'
 import {
   APPOINTMENT_STATUS_LABELS,
   type AppointmentWithRelations,
+  type Page,
   type Professional,
+  type TaskListItem,
 } from '@clinicas/shared'
 import { apiFetch } from '../../../lib/api'
 import { getActiveSession } from '../../session'
 import { localDateKey, localTimeLabel, rangeFor } from '../agenda/agenda-time'
+import { prazoCurto } from '../pendencias/pd-format'
 import { fullDateLabel, initials, minutesBetween } from '../../ui/format'
 import {
   IconAlert,
@@ -33,12 +36,39 @@ export default async function TodayPage() {
   const today = localDateKey(new Date(), timezone)
   const { from, to } = rangeFor(today, 'day', timezone)
 
-  // Duas chamadas, uma onda. Tudo abaixo sai destes dados — nenhum indicador
-  // depende de endpoint que ainda nao existe.
-  const [appointments, professionals] = await Promise.all([
+  /*
+   * Ate 3 pendencias abertas em "Precisa da sua atencao": Atrasadas primeiro,
+   * Hoje depois. limit=4 em cada busca (nao 3) e de proposito — o item extra,
+   * se vier, so serve para saber que ha mais sem precisar contar o total.
+   * Nenhuma chamada extra so para contagem: a API nao promete `/tasks/counts`,
+   * e inventar um numero que pode ficar errado e pior que nao mostrar nenhum.
+   */
+  const PENDENCIAS_LIMITE = 3
+  const PENDENCIAS_BUSCA = PENDENCIAS_LIMITE + 1
+
+  const [appointments, professionals, pendenciasAtrasadas, pendenciasHoje] = await Promise.all([
     apiFetch<AppointmentWithRelations[]>(`/api/appointments?from=${from}&to=${to}`, { clinicId }),
     apiFetch<Professional[]>('/api/professionals?active=true', { clinicId }),
+    apiFetch<Page<TaskListItem>>(
+      `/api/tasks?limit=${PENDENCIAS_BUSCA}&status=open&due=overdue&assignment=any`,
+      { clinicId },
+    ),
+    apiFetch<Page<TaskListItem>>(
+      `/api/tasks?limit=${PENDENCIAS_BUSCA}&status=open&due=today&assignment=any`,
+      { clinicId },
+    ),
   ])
+
+  const pendenciasAtrasadasMostradas = pendenciasAtrasadas.items.slice(0, PENDENCIAS_LIMITE)
+  const vagasRestantes = PENDENCIAS_LIMITE - pendenciasAtrasadasMostradas.length
+  const pendenciasHojeMostradas = pendenciasHoje.items.slice(0, vagasRestantes)
+  const pendenciasAtencao = [
+    ...pendenciasAtrasadasMostradas.map((t) => ({ tarefa: t, atrasada: true })),
+    ...pendenciasHojeMostradas.map((t) => ({ tarefa: t, atrasada: false })),
+  ]
+  const temMaisPendencias =
+    pendenciasAtrasadas.items.length > pendenciasAtrasadasMostradas.length ||
+    pendenciasHoje.items.length > pendenciasHojeMostradas.length
 
   const ativos = appointments.filter((a) => a.status !== 'cancelled')
   const count = (status: string) => appointments.filter((a) => a.status === status).length
@@ -174,7 +204,7 @@ export default async function TodayPage() {
                 <span className="badge warn plain tabular">{precisaAtencao.length}</span>
               ) : null}
             </div>
-            {precisaAtencao.length === 0 ? (
+            {precisaAtencao.length === 0 && pendenciasAtencao.length === 0 ? (
               /*
                 Faixa, nao card vazio. Um bloco de 100px de altura centralizando
                 "nada pendente" gastava a mesma area de uma lista cheia para
@@ -191,24 +221,59 @@ export default async function TodayPage() {
                 </span>
               </div>
             ) : (
-              <ul className="plain-list">
-                {precisaAtencao.map((a) => (
-                  <li key={a.id}>
-                    <Link href={`/agenda?date=${today}`} className="attn-row">
-                      <span className={`dot ${a.status}`} />
-                      <span style={{ minWidth: 0, flex: 1 }}>
-                        <span className="attn-name">{a.patientName}</span>
-                        <span className="faint">
-                          {localTimeLabel(a.startsAt, timezone)} · {a.professionalName}
-                        </span>
-                      </span>
-                      <span className={`badge ${a.status}`}>
-                        {APPOINTMENT_STATUS_LABELS[a.status]}
-                      </span>
+              <>
+                {precisaAtencao.length > 0 ? (
+                  <ul className="plain-list">
+                    {precisaAtencao.map((a) => (
+                      <li key={a.id}>
+                        <Link href={`/agenda?date=${today}`} className="attn-row">
+                          <span className={`dot ${a.status}`} />
+                          <span style={{ minWidth: 0, flex: 1 }}>
+                            <span className="attn-name">{a.patientName}</span>
+                            <span className="faint">
+                              {localTimeLabel(a.startsAt, timezone)} · {a.professionalName}
+                            </span>
+                          </span>
+                          <span className={`badge ${a.status}`}>
+                            {APPOINTMENT_STATUS_LABELS[a.status]}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                {pendenciasAtencao.length > 0 ? (
+                  <ul
+                    className="plain-list"
+                    style={precisaAtencao.length > 0 ? { borderTop: '1px solid var(--line-soft)' } : undefined}
+                  >
+                    {pendenciasAtencao.map(({ tarefa, atrasada }) => (
+                      <li key={tarefa.id}>
+                        <Link href="/pendencias" className="attn-row">
+                          <span style={{ minWidth: 0, flex: 1 }}>
+                            <span className="attn-name">{tarefa.title}</span>
+                            <span className="faint">
+                              <span className={atrasada ? 'attn-prazo-atrasado' : undefined}>
+                                {prazoCurto(tarefa.dueAt, timezone)}
+                              </span>
+                              {tarefa.assignee ? ` · ${tarefa.assignee.displayName ?? 'Sem nome'}` : ''}
+                            </span>
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                {temMaisPendencias ? (
+                  <div className="attn-mais">
+                    <Link href="/pendencias" className="btn ghost sm">
+                      Ver todas as pendências →
                     </Link>
-                  </li>
-                ))}
-              </ul>
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
 
