@@ -66,6 +66,7 @@ function frase(e: TaskEventView): string {
 export function PendenciaDrawer({
   pendencia,
   eventos,
+  eventosFalhou,
   equipe,
   timezone,
   onFechar,
@@ -73,6 +74,7 @@ export function PendenciaDrawer({
 }: {
   pendencia: TaskDetail
   eventos: Page<TaskEventView>
+  eventosFalhou: boolean
   equipe: ClinicMemberSummary[]
   timezone: string
   onFechar: () => void
@@ -429,15 +431,25 @@ export function PendenciaDrawer({
 
           <div className="pd-bloco">
             <p className="label">Histórico</p>
-            <ul className="pd-historico">
-              {eventos.items.map((e) => (
-                <li key={e.id} className="pd-evento">
-                  <span className="pd-evento-marca" aria-hidden="true" />
-                  <span className="pd-evento-texto">{frase(e)}</span>
-                  <span className="faint tabular pd-evento-hora">{hora(e.createdAt, timezone)}</span>
-                </li>
-              ))}
-            </ul>
+            {eventosFalhou ? (
+              // Discreto de proposito: nao e o mesmo peso visual de um erro de
+              // acao (aviso fixo no rodape). O resto do drawer continua
+              // usavel — so o historico nao carregou. Nunca mostrar isto como
+              // lista vazia: pendencia nenhuma nasce sem o evento `created`.
+              <p className="faint pd-historico-erro">
+                Não foi possível carregar o histórico agora. Tente reabrir a pendência.
+              </p>
+            ) : (
+              <ul className="pd-historico">
+                {eventos.items.map((e) => (
+                  <li key={e.id} className="pd-evento">
+                    <span className="pd-evento-marca" aria-hidden="true" />
+                    <span className="pd-evento-texto">{frase(e)}</span>
+                    <span className="faint tabular pd-evento-hora">{hora(e.createdAt, timezone)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 

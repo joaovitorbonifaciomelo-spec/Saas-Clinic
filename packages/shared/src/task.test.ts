@@ -255,13 +255,38 @@ describe('metadata de evento', () => {
     expect(parseTaskEventMetadata('released', {}).ok).toBe(false)
   })
 
-  it.each(['created', 'completed', 'cancelled', 'reopened'] as const)(
-    '%s tem metadata vazia',
-    (tipo) => {
-      expect(parseTaskEventMetadata(tipo, {}).ok).toBe(true)
-      expect(parseTaskEventMetadata(tipo, { qualquer: 'coisa' }).ok).toBe(false)
-    },
-  )
+  it.each(['completed', 'cancelled', 'reopened'] as const)('%s tem metadata vazia', (tipo) => {
+    expect(parseTaskEventMetadata(tipo, {}).ok).toBe(true)
+    expect(parseTaskEventMetadata(tipo, { qualquer: 'coisa' }).ok).toBe(false)
+  })
+
+  it('created fica vazia quando nasce sem responsavel', () => {
+    expect(parseTaskEventMetadata('created', {}).ok).toBe(true)
+    expect(parseTaskEventMetadata('created', { qualquer: 'coisa' }).ok).toBe(false)
+  })
+
+  it('created carrega o snapshot do responsavel quando nasce ja atribuida', () => {
+    const r = parseTaskEventMetadata('created', {
+      assignedTo: { userId: UUID, displayName: 'Ana' },
+    })
+    expect(r.ok).toBe(true)
+    expect(r.ok && r.metadata).toEqual({ assignedTo: { userId: UUID, displayName: 'Ana' } })
+  })
+
+  it('created aceita nome nulo no snapshot do responsavel', () => {
+    expect(
+      parseTaskEventMetadata('created', { assignedTo: { userId: UUID, displayName: null } }).ok,
+    ).toBe(true)
+  })
+
+  it('created rejeita snapshot sem userId ou com campo a mais', () => {
+    expect(parseTaskEventMetadata('created', { assignedTo: {} }).ok).toBe(false)
+    expect(
+      parseTaskEventMetadata('created', {
+        assignedTo: { userId: UUID, displayName: 'Ana', role: 'admin' },
+      }).ok,
+    ).toBe(false)
+  })
 
   it('reopened nao carrega from_status: o evento anterior no log ja diz', () => {
     expect(parseTaskEventMetadata('reopened', { from_status: 'completed' }).ok).toBe(false)

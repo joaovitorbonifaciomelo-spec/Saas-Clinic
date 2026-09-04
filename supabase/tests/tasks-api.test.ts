@@ -423,6 +423,25 @@ describe('GET /api/tasks/:id/events', () => {
     expect(created.metadata).toEqual({})
   })
 
+  it('nasce ja atribuida: events 200, snapshot correto, ator continua sendo quem criou', async () => {
+    // Maria cria e ja manda para Joao — nao e "criar e depois atribuir", e
+    // uma decisao so. O ator do evento `created` tem que continuar sendo
+    // Maria (quem executou a chamada), nunca Joao (quem recebeu a tarefa).
+    const t = await novaTask(c.maria.db, c.maria.clinicId, {
+      title: 'Ja nasce atribuida',
+      assignee: c.joao.userId,
+    })
+
+    const r = await comoMaria<Page<TaskEventView>>(`/tasks/${t.id}/events`)
+    expect(r.status, r.body.slice(0, 300)).toBe(200)
+
+    const created = r.json.items.find((e) => e.eventType === 'created')!
+    expect(created.metadata).toEqual({
+      assignedTo: { userId: c.joao.userId, displayName: 'Colega JOAO' },
+    })
+    expect(created.actorUserId).toBe(c.maria.userId)
+  })
+
   it('preserva o snapshot depois de a conta do ator sumir', async () => {
     const email = `evsai-${c.registry.testRunId}@example.test`
     const password = `Senha-Teste-${c.registry.testRunId}!`

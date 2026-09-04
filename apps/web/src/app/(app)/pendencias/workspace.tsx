@@ -22,6 +22,7 @@ export function PendenciasWorkspace({
   lista,
   pendencia,
   eventos,
+  eventosFalhou,
   equipe,
   timezone,
 }: {
@@ -29,6 +30,7 @@ export function PendenciasWorkspace({
   lista: Page<TaskListItem>
   pendencia: TaskDetail | null
   eventos: Page<TaskEventView>
+  eventosFalhou: boolean
   equipe: ClinicMemberSummary[]
   timezone: string
 }) {
@@ -80,6 +82,7 @@ export function PendenciasWorkspace({
         <PendenciaDrawer
           pendencia={pendencia}
           eventos={eventos}
+          eventosFalhou={eventosFalhou}
           equipe={equipe}
           timezone={timezone}
           onFechar={fecharDrawer}

@@ -177,21 +177,40 @@ export const taskDueChangedMetadataSchema = z
 /**
  * Vazio, e vazio por decisao.
  *
- * `created`, `completed`, `cancelled` e `reopened` ja tem tudo o que importa nas
- * COLUNAS do evento — ator, snapshot do nome, papel e instante. O que sobraria
- * para a metadata seria copia de coisa que ja esta na linha da tarefa.
+ * `completed`, `cancelled` e `reopened` ja tem tudo o que importa nas COLUNAS
+ * do evento — ator, snapshot do nome, papel e instante. O que sobraria para a
+ * metadata seria copia de coisa que ja esta na linha da tarefa.
  *
  * `reopened` nao carrega `from_status`: o evento terminal imediatamente anterior
  * no log ja diz de onde veio, e repetir criaria uma segunda fonte de verdade
  * capaz de discordar da primeira.
  *
- * `created` nao carrega os ids de contexto. Eles sao IMUTAVEIS e vivem na
- * propria tarefa, entao a copia so teria efeito no unico caso em que a linha
- * perde a referencia: exclusao do paciente. E, nesse caso, guardar o uuid de um
- * paciente apagado nao devolve nome nenhum — mantem apenas um vestigio de uma
- * associacao que o administrador pediu para apagar.
+ * `created` NAO usa este schema — ver `taskCreatedMetadataSchema` abaixo. Ele
+ * fica quase sempre vazio, mas nao SEMPRE, e por isso tem tipo proprio.
  */
 export const taskEmptyMetadataSchema = z.object({}).strict()
+
+/**
+ * `created` carrega, no maximo, uma chave: o responsavel inicial.
+ *
+ * Os ids de contexto nao entram: sao IMUTAVEIS e vivem na propria tarefa,
+ * entao a copia so teria efeito no unico caso em que a linha perde a
+ * referencia: exclusao do paciente. E, nesse caso, guardar o uuid de um
+ * paciente apagado nao devolve nome nenhum — mantem apenas um vestigio de uma
+ * associacao que o administrador pediu para apagar.
+ *
+ * `assignedTo`, ao contrario, existe para tapar um buraco real de auditoria:
+ * uma tarefa pode nascer ja atribuida, e se essa pessoa for removida da
+ * clinica antes de qualquer transferencia ou devolucao, o `ON DELETE SET
+ * NULL` zera `assigned_to` SEM gerar evento — sem esta chave, quem era o
+ * responsavel inicial desapareceria por completo. Mesmo formato de
+ * `taskAssigneeSnapshotSchema` usado por `assigned`/`transferred`/`released`,
+ * porque vem da mesma funcao SQL (`task_member_snapshot`). Espelha o CHECK
+ * `task_events_created_metadata` do banco.
+ */
+export const taskCreatedMetadataSchema = z
+  .object({ assignedTo: taskAssigneeSnapshotSchema.optional() })
+  .strict()
 
 /**
  * Comprimento em BYTES de uma string UTF-8, sem depender do ambiente.
@@ -220,7 +239,7 @@ export function parseTaskEventMetadata(
   | { ok: true; metadata: Record<string, unknown> }
   | { ok: false; error: string } {
   const schemas: Record<TaskEventType, z.ZodType> = {
-    created: taskEmptyMetadataSchema,
+    created: taskCreatedMetadataSchema,
     completed: taskEmptyMetadataSchema,
     cancelled: taskEmptyMetadataSchema,
     reopened: taskEmptyMetadataSchema,

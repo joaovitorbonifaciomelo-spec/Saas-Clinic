@@ -39,10 +39,33 @@ export default async function PendenciasPage({ searchParams }: PageProps) {
       return vazio
     })
 
+  /*
+   * O historico tem tratamento PROPRIO: os outros `opcional(...)` viram lista
+   * vazia em caso de falha porque vazio e um estado legitimo pra eles. Vazio
+   * NAO e um estado legitimo pro historico — toda pendencia tem pelo menos o
+   * evento `created` —, entao aqui a falha vira uma flag propria em vez de se
+   * disfarcar de "sem eventos ainda".
+   */
+  const buscarEventos = async (
+    clinicId: string,
+    taskId: string | undefined,
+  ): Promise<{ eventos: Page<TaskEventView>; eventosFalhou: boolean }> => {
+    if (!taskId) return { eventos: { items: [], nextCursor: null }, eventosFalhou: false }
+    try {
+      const eventos = await apiFetch<Page<TaskEventView>>(`/api/tasks/${taskId}/events?limit=30`, {
+        clinicId,
+      })
+      return { eventos, eventosFalhou: false }
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error
+      return { eventos: { items: [], nextCursor: null }, eventosFalhou: true }
+    }
+  }
+
   const { session, data } = await loadForActiveClinic(async (clinicId) => {
     const selecionada = params.id
 
-    const [lista, detalhe, eventos, equipe] = await Promise.all([
+    const [lista, detalhe, { eventos, eventosFalhou }, equipe] = await Promise.all([
       apiFetch<Page<TaskListItem>>(`/api/tasks?${query.toString()}`, { clinicId }),
       selecionada
         ? opcional(
@@ -50,19 +73,14 @@ export default async function PendenciasPage({ searchParams }: PageProps) {
             null as TaskDetail | null,
           )
         : Promise.resolve(null),
-      selecionada
-        ? opcional(
-            apiFetch<Page<TaskEventView>>(`/api/tasks/${selecionada}/events?limit=30`, { clinicId }),
-            { items: [], nextCursor: null } as Page<TaskEventView>,
-          )
-        : Promise.resolve({ items: [], nextCursor: null } as Page<TaskEventView>),
+      buscarEventos(clinicId, selecionada),
       opcional(
         apiFetch<ClinicMemberSummary[]>('/api/clinics/members', { clinicId }),
         [] as ClinicMemberSummary[],
       ),
     ])
 
-    return { lista, detalhe, eventos, equipe }
+    return { lista, detalhe, eventos, eventosFalhou, equipe }
   })
 
   return (
@@ -73,6 +91,7 @@ export default async function PendenciasPage({ searchParams }: PageProps) {
         lista={data.lista}
         pendencia={data.detalhe}
         eventos={data.eventos}
+        eventosFalhou={data.eventosFalhou}
         equipe={data.equipe}
         timezone={session.activeClinic.clinicTimezone}
       />

@@ -4292,6 +4292,11 @@ th.num {
   flex-direction: column;
   gap: 7px;
 }
+.pd-historico-erro {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
 .pd-evento {
   display: flex;
   align-items: center;
