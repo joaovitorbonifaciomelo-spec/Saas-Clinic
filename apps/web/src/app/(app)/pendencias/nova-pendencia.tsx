@@ -17,13 +17,42 @@ import { deDatetimeLocal } from './pd-format'
  * que tambem so busca paciente), e inventar um agora seria escopo que esta
  * rodada nao pediu.
  *
- * `contexto` e o outro caminho de entrada: quando o Atendimento abre este
- * MESMO formulario a partir de uma conversa (em vez de abri-lo a partir de
- * /pendencias), conversationId e patientId ja vem decididos pela conversa —
+ * `contexto` e o outro caminho de entrada: quando Atendimento, Paciente ou
+ * Agendamento abrem este MESMO formulario a partir da propria tela (em vez de
+ * abri-lo a partir de /pendencias), o id relevante (conversationId,
+ * appointmentId, patientId — cada tela manda o que tem) ja vem decidido —
  * a pessoa so preenche titulo, descricao, prazo e responsavel. Por isso o
- * seletor de paciente NEM aparece neste modo: mostrar um campo que a resposta
+ * seletor de paciente NEM aparece neste modo: mostrar um campo cuja resposta
  * ja esta fixada, so pra ficar desabilitado, seria pior do que omiti-lo.
+ *
+ * `conversationId` e `appointmentId` sao mutuamente exclusivos na pratica
+ * (cada tela manda o seu, nunca os dois), mas nada aqui impede os dois juntos
+ * porque o proprio `createTaskSchema` ja aceita essa combinacao — nao ha
+ * necessidade de reforcar uma regra que a tela nunca vai violar.
  */
+type Contexto = {
+  conversationId?: string
+  appointmentId?: string
+  patientId: string | null
+  patientName: string | null
+}
+
+/** Frase fixa mostrada no lugar do seletor de paciente, por origem. */
+function fraseContexto(ctx: Contexto): string {
+  if (ctx.conversationId) {
+    return ctx.patientName
+      ? `Vinculada ao atendimento e a ${ctx.patientName}.`
+      : 'Vinculada a este atendimento — a conversa ainda não tem paciente.'
+  }
+  if (ctx.appointmentId) {
+    return ctx.patientName
+      ? `Vinculada a este agendamento e a ${ctx.patientName}.`
+      : 'Vinculada a este agendamento — sem paciente vinculado.'
+  }
+  // So patientId: veio da propria ficha do paciente, que sempre tem nome.
+  return `Vinculada a ${ctx.patientName}.`
+}
+
 export function NovaPendencia({
   equipe,
   timezone,
@@ -33,7 +62,7 @@ export function NovaPendencia({
 }: {
   equipe: ClinicMemberSummary[]
   timezone: string
-  contexto?: { conversationId: string; patientId: string | null; patientName: string | null }
+  contexto?: Contexto
   onFechar: () => void
   onCriada: (id: string) => void
 }) {
@@ -81,6 +110,7 @@ export function NovaPendencia({
       assignedTo: responsavelId === '' ? null : responsavelId,
       patientId: contexto ? contexto.patientId : pacienteId === '' ? null : pacienteId,
       conversationId: contexto?.conversationId ?? null,
+      appointmentId: contexto?.appointmentId ?? null,
     })
     setSalvando(false)
 
@@ -150,12 +180,8 @@ export function NovaPendencia({
           </div>
 
           {contexto ? (
-            // Contexto vem da conversa, nao e escolha de quem preenche.
-            <p className="faint">
-              {contexto.patientName
-                ? `Vinculada ao atendimento e a ${contexto.patientName}.`
-                : 'Vinculada a este atendimento — a conversa ainda não tem paciente.'}
-            </p>
+            // Contexto vem da tela de origem, nao e escolha de quem preenche.
+            <p className="faint">{fraseContexto(contexto)}</p>
           ) : (
             <label>
               <span className="label">Paciente (opcional)</span>

@@ -1,6 +1,7 @@
 import type {
   AppointmentWithRelations,
   AvailabilityBlock,
+  ClinicMemberSummary,
   Patient,
   Professional,
   Service,
@@ -52,7 +53,7 @@ export default async function AgendaPage({ searchParams }: AgendaPageProps) {
    * Sem filtro de profissional a grade mostra varios profissionais, e um fundo
    * de disponibilidade unico nao significaria nada — por isso a lista vazia.
    */
-  const [appointments, professionals, services, patients, availability] = await Promise.all([
+  const [appointments, professionals, services, patients, availability, equipe] = await Promise.all([
     apiFetch<AppointmentWithRelations[]>(`/api/appointments?${query.toString()}`, { clinicId }),
     apiFetch<Professional[]>('/api/professionals', { clinicId }),
     apiFetch<Service[]>('/api/services?active=true', { clinicId }),
@@ -71,6 +72,7 @@ export default async function AgendaPage({ searchParams }: AgendaPageProps) {
     apiFetch<AvailabilityBlock[]>('/api/professionals/availability', { clinicId }).catch(
       () => [] as AvailabilityBlock[],
     ),
+    apiFetch<ClinicMemberSummary[]>('/api/clinics/members', { clinicId }),
   ])
 
   return (
@@ -92,6 +94,7 @@ export default async function AgendaPage({ searchParams }: AgendaPageProps) {
         services={services}
         patients={patients}
         availability={availability}
+        equipe={equipe}
       />
     </div>
   )

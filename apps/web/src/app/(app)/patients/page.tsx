@@ -3,6 +3,7 @@ import {
   APPOINTMENT_STATUS_LABELS,
   selectNextAppointment,
   type AppointmentWithRelations,
+  type ClinicMemberSummary,
   type Patient,
 } from '@clinicas/shared'
 import { ApiError, apiFetch } from '../../../lib/api'
@@ -12,6 +13,7 @@ import { formatDateLabel, localDateKey, localTimeLabel } from '../agenda/agenda-
 import { formatPhone, initials } from '../../ui/format'
 import { IconCake, IconEdit, IconPhone, IconPlus, IconShield } from '../../ui/icons'
 import { PatientList } from './patient-list'
+import { PatientPendencia } from './patient-pendencia'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,13 +51,14 @@ export default async function PatientsPage({ searchParams }: PageProps) {
     })
 
   const { session, data } = await loadForActiveClinic(async (clinicId) => {
-    const [patients, historicoPreCarregado] = await Promise.all([
+    const [patients, historicoPreCarregado, equipe] = await Promise.all([
       apiFetch<Patient[]>('/api/patients', { clinicId }),
       params.p ? historicoDe(clinicId, params.p) : Promise.resolve(null),
+      apiFetch<ClinicMemberSummary[]>('/api/clinics/members', { clinicId }),
     ])
-    return { clinicId, patients, historicoPreCarregado }
+    return { clinicId, patients, historicoPreCarregado, equipe }
   })
-  const { clinicId, patients, historicoPreCarregado } = data
+  const { clinicId, patients, historicoPreCarregado, equipe } = data
   const timezone = session.activeClinic.clinicTimezone
 
   // Sem selecao explicita, abre o primeiro: painel vazio nao ajuda ninguem.
@@ -134,6 +137,12 @@ export default async function PatientsPage({ searchParams }: PageProps) {
                 >
                   <IconPlus /> Novo agendamento
                 </Link>
+                <PatientPendencia
+                  patientId={selected.id}
+                  patientName={selected.name}
+                  equipe={equipe}
+                  timezone={timezone}
+                />
               </div>
             </div>
           </section>

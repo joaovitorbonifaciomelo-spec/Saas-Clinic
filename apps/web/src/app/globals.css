@@ -3014,6 +3014,24 @@ th.num {
   line-height: 1.45;
   box-shadow: var(--shadow-pop);
 }
+/* Mesma forma de .at-aviso/.pd-aviso — Agenda e Pacientes ganham a mesma
+   pilula discreta pra avisar sucesso/erro sem roubar foco nem layout. */
+.ag-aviso,
+.pt-aviso {
+  position: fixed;
+  left: 50%;
+  bottom: var(--s5);
+  transform: translateX(-50%);
+  z-index: 70;
+  max-width: min(520px, calc(100vw - var(--s5) * 2));
+  background: var(--nav);
+  color: var(--nav-text-strong);
+  padding: 10px var(--s4);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: var(--shadow-pop);
+}
 
 /* --- FILA --------------------------------------------------------------- */
 .at-fila {

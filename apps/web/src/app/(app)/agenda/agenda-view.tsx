@@ -1,12 +1,13 @@
 'use client'
 
-import { useMemo, useOptimistic, useState, useTransition } from 'react'
+import { useEffect, useMemo, useOptimistic, useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   APPOINTMENT_STATUS_LABELS,
   WEEKDAY_LABELS,
   type AppointmentWithRelations,
   type AvailabilityBlock,
+  type ClinicMemberSummary,
   type Patient,
   type Professional,
   type Service,
@@ -40,6 +41,7 @@ interface AgendaViewProps {
   services: Service[]
   patients: Patient[]
   availability: AvailabilityBlock[]
+  equipe: ClinicMemberSummary[]
   openNew: boolean
   presetPatientId?: string
 }
@@ -58,6 +60,14 @@ export function AgendaView(props: AgendaViewProps) {
     | { mode: 'group'; appointments: AppointmentWithRelations[] }
     | null
   >(props.openNew ? { mode: 'create', date: props.date } : null)
+  const [aviso, setAviso] = useState<string | null>(null)
+
+  /** Aviso humano, discreto. Some sozinho — mesmo padrao de Atendimento/Pendencias. */
+  useEffect(() => {
+    if (!aviso) return
+    const t = setTimeout(() => setAviso(null), 6000)
+    return () => clearTimeout(t)
+  }, [aviso])
 
   /*
    * Toolbar otimista.
@@ -223,6 +233,12 @@ export function AgendaView(props: AgendaViewProps) {
 
   return (
     <>
+      {aviso ? (
+        <div className="ag-aviso" role="status">
+          {aviso}
+        </div>
+      ) : null}
+
       <div className="page-head">
         <div>
           <h1>Agenda</h1>
@@ -414,6 +430,7 @@ export function AgendaView(props: AgendaViewProps) {
           patients={props.patients}
           professionals={ativos}
           services={props.services}
+          equipe={props.equipe}
           defaultDate={drawer.mode === 'create' ? drawer.date : undefined}
           defaultTime={drawer.mode === 'create' ? drawer.time : undefined}
           defaultProfessionalId={drawer.mode === 'create' ? drawer.professionalId : undefined}
@@ -424,6 +441,7 @@ export function AgendaView(props: AgendaViewProps) {
             setDrawer(null)
             router.refresh()
           }}
+          onAviso={setAviso}
         />
       ) : null}
     </>

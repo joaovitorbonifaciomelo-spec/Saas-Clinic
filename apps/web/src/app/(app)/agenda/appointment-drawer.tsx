@@ -6,6 +6,7 @@ import {
   APPOINTMENT_STATUS_TRANSITIONS,
   WEEKDAY_LABELS,
   type AppointmentWithRelations,
+  type ClinicMemberSummary,
   type Patient,
   type Professional,
   type Service,
@@ -16,6 +17,8 @@ import {
   type AgendaActionState,
 } from './agenda-actions'
 import { instantFromLocal, localDateKey, localTimeLabel } from './agenda-time'
+import { NovaPendencia } from '../pendencias/nova-pendencia'
+import { IconPlus } from '../../ui/icons'
 
 const initialState: AgendaActionState = { error: null }
 
@@ -24,6 +27,7 @@ interface AppointmentDrawerProps {
   patients: Patient[]
   professionals: Professional[]
   services: Service[]
+  equipe: ClinicMemberSummary[]
   defaultDate?: string
   defaultTime?: string
   defaultProfessionalId?: string
@@ -31,6 +35,7 @@ interface AppointmentDrawerProps {
   appointment?: AppointmentWithRelations
   onClose: () => void
   onSaved: () => void
+  onAviso: (texto: string) => void
 }
 
 function addMinutes(time: string, minutes: number): string {
@@ -238,7 +243,14 @@ export function AppointmentDrawer(props: AppointmentDrawerProps) {
         </form>
 
         {editing ? (
-          <StatusPanel appointment={editing} nextStatuses={nextStatuses} onDone={props.onSaved} />
+          <StatusPanel
+            appointment={editing}
+            nextStatuses={nextStatuses}
+            onDone={props.onSaved}
+            equipe={props.equipe}
+            timezone={props.timezone}
+            onAviso={props.onAviso}
+          />
         ) : null}
       </div>
     </div>
@@ -249,13 +261,20 @@ function StatusPanel({
   appointment,
   nextStatuses,
   onDone,
+  equipe,
+  timezone,
+  onAviso,
 }: {
   appointment: AppointmentWithRelations
   nextStatuses: readonly string[]
   onDone: () => void
+  equipe: ClinicMemberSummary[]
+  timezone: string
+  onAviso: (texto: string) => void
 }) {
   const action = changeAppointmentStatusAction.bind(null, appointment.id)
   const [state, formAction, pending] = useActionState(action, initialState)
+  const [criandoPendencia, setCriandoPendencia] = useState(false)
 
   useEffect(() => {
     if (state.ok) onDone()
@@ -287,6 +306,29 @@ function StatusPanel({
       )}
 
       {state.error ? <p className="error">{state.error}</p> : null}
+
+      <button type="button" className="secondary" onClick={() => setCriandoPendencia(true)}>
+        <IconPlus size={14} /> Criar pendência
+      </button>
+
+      {criandoPendencia ? (
+        <NovaPendencia
+          equipe={equipe}
+          timezone={timezone}
+          contexto={{
+            appointmentId: appointment.id,
+            patientId: appointment.patientId,
+            patientName: appointment.patientName,
+          }}
+          onFechar={() => setCriandoPendencia(false)}
+          onCriada={() => {
+            // Fecha, avisa e fica no agendamento — nunca navega para
+            // /pendencias sozinho.
+            setCriandoPendencia(false)
+            onAviso('Pendência criada.')
+          }}
+        />
+      ) : null}
     </div>
   )
 }
