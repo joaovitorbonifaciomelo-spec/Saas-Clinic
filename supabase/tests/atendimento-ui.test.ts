@@ -660,6 +660,75 @@ describe('contexto do paciente', () => {
 })
 
 /* ===========================================================================
+   Criar pendencia a partir do atendimento
+   ======================================================================== */
+describe('criar pendência a partir do atendimento', () => {
+  it('conversa sem paciente: formulario nao pede paciente, e conversationId fica salvo sem patientId', async () => {
+    const id = await semearConversa(maria, 'Contato Sem Paciente Pend')
+    const page = await abrirAtendimento(maria.ctx, `?c=${id}`)
+
+    await page.click('button:has-text("Criar pendência")')
+    await page.waitForSelector('.pd-drawer', { timeout: 30_000 })
+
+    // Nao ha select de paciente neste modo — so o aviso de contexto fixo.
+    expect(await page.locator('.pd-drawer select').count()).toBe(1) // so o de responsavel
+    expect(await page.locator('.pd-drawer').innerText()).toContain(
+      'a conversa ainda não tem paciente',
+    )
+
+    const titulo = `Ligar de volta ${registry.testRunId.slice(0, 6)}`
+    await page.fill('.pd-drawer input:not([type])', titulo)
+    await page.click('.pd-drawer button:has-text("Criar pendência")')
+
+    // Fecha, avisa, e continua no Atendimento — nunca navega pra /pendencias.
+    await page.waitForSelector('.at-aviso:has-text("Pendência criada")', { timeout: 30_000 })
+    expect(await page.locator('.pd-drawer').count()).toBe(0)
+    expect(page.url()).toContain('/atendimento')
+
+    const { data: tarefa } = await admin
+      .from('tasks')
+      .select('conversation_id, patient_id, title')
+      .eq('conversation_id', id)
+      .single()
+    expect(tarefa?.title).toBe(titulo)
+    expect(tarefa?.conversation_id).toBe(id)
+    expect(tarefa?.patient_id).toBeNull()
+
+    await page.close()
+  })
+
+  it('conversa com paciente: formulario avisa o vinculo, e a pendencia sai com conversationId e patientId corretos', async () => {
+    const id = await semearConversa(maria, 'Contato Com Paciente Pend', null, maria.patientId)
+    const page = await abrirAtendimento(maria.ctx, `?c=${id}`)
+
+    await page.click('button:has-text("Criar pendência")')
+    await page.waitForSelector('.pd-drawer', { timeout: 30_000 })
+    expect(await page.locator('.pd-drawer').innerText()).toContain(
+      'Vinculada ao atendimento e a Joana Ribeiro.',
+    )
+
+    const titulo = `Confirmar retorno ${registry.testRunId.slice(0, 6)}`
+    await page.fill('.pd-drawer input:not([type])', titulo)
+    await page.click('.pd-drawer button:has-text("Criar pendência")')
+
+    await page.waitForSelector('.at-aviso:has-text("Pendência criada")', { timeout: 30_000 })
+    expect(await page.locator('.pd-drawer').count()).toBe(0)
+    expect(page.url()).toContain('/atendimento')
+
+    const { data: tarefa } = await admin
+      .from('tasks')
+      .select('conversation_id, patient_id, title')
+      .eq('conversation_id', id)
+      .single()
+    expect(tarefa?.title).toBe(titulo)
+    expect(tarefa?.conversation_id).toBe(id)
+    expect(tarefa?.patient_id).toBe(maria.patientId)
+
+    await page.close()
+  })
+})
+
+/* ===========================================================================
    Fila: filtros, busca, selecao
    ======================================================================== */
 describe('fila', () => {

@@ -18,9 +18,10 @@ import {
   type ResultadoControle,
 } from './atendimento-actions'
 import { formatPhone } from '../../ui/format'
-import { IconChevronLeft, IconCheck, IconPhone, IconUsers } from '../../ui/icons'
+import { IconCheck, IconChevronLeft, IconPhone, IconPlus, IconUsers } from '../../ui/icons'
 import { hora, rotuloDoDia } from './at-format'
 import { PAPEL_UI, STATUS_UI } from './visoes'
+import { NovaPendencia } from '../pendencias/nova-pendencia'
 
 
 /** Frases prontas para os eventos. O que a UI mostra e a acao, nao o payload. */
@@ -86,6 +87,7 @@ export function Thread({
   const [direcao, setDirecao] = useState<'inbound' | 'outbound'>('outbound')
   const [registrando, setRegistrando] = useState(false)
   const [erroComposer, setErroComposer] = useState<string | null>(null)
+  const [criandoPendencia, setCriandoPendencia] = useState(false)
   const ancoraTransferir = useRef<HTMLDivElement>(null)
 
   const encerrada = conversa?.status === 'resolved'
@@ -356,6 +358,13 @@ export function Thread({
           <button type="button" className="btn ghost sm at-ver-contexto" onClick={onAbrirContexto}>
             <IconUsers /> Paciente
           </button>
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => setCriandoPendencia(true)}
+          >
+            <IconPlus size={14} /> Criar pendência
+          </button>
         </div>
 
       </header>
@@ -491,6 +500,25 @@ export function Thread({
           </button>
         </div>
       </form>
+
+      {criandoPendencia ? (
+        <NovaPendencia
+          equipe={equipe}
+          timezone={timezone}
+          contexto={{
+            conversationId: c.id,
+            patientId: c.patient?.id ?? null,
+            patientName: c.patient?.name ?? null,
+          }}
+          onFechar={() => setCriandoPendencia(false)}
+          onCriada={() => {
+            // Fecha, avisa e fica no Atendimento — nunca navega para
+            // /pendencias sozinho. Quem quiser ver a pendencia decide isso.
+            setCriandoPendencia(false)
+            onAviso('Pendência criada.')
+          }}
+        />
+      ) : null}
     </section>
   )
 }

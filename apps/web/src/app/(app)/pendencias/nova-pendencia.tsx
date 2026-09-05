@@ -12,20 +12,28 @@ import { deDatetimeLocal } from './pd-format'
  *
  * Contexto e OPCIONAL — uma pendencia geral da clinica e legitima, e nao ha
  * campo algum "obrigando" a escolher paciente, conversa ou agendamento. So
- * paciente aparece aqui: nao existe seletor reutilizavel de conversa nem de
- * agendamento no projeto (ver `atendimento/painel-contexto.tsx`, que tambem so
- * busca paciente), e inventar um agora seria escopo que esta rodada nao pediu.
- * Vincular a uma conversa ou agendamento especifico fica para quando esses
- * modulos ganharem o botao "Criar pendencia" — fora desta rodada, de proposito.
+ * paciente aparece como SELETOR aqui: nao existe seletor reutilizavel de
+ * conversa nem de agendamento no projeto (ver `atendimento/painel-contexto.tsx`,
+ * que tambem so busca paciente), e inventar um agora seria escopo que esta
+ * rodada nao pediu.
+ *
+ * `contexto` e o outro caminho de entrada: quando o Atendimento abre este
+ * MESMO formulario a partir de uma conversa (em vez de abri-lo a partir de
+ * /pendencias), conversationId e patientId ja vem decididos pela conversa —
+ * a pessoa so preenche titulo, descricao, prazo e responsavel. Por isso o
+ * seletor de paciente NEM aparece neste modo: mostrar um campo que a resposta
+ * ja esta fixada, so pra ficar desabilitado, seria pior do que omiti-lo.
  */
 export function NovaPendencia({
   equipe,
   timezone,
+  contexto,
   onFechar,
   onCriada,
 }: {
   equipe: ClinicMemberSummary[]
   timezone: string
+  contexto?: { conversationId: string; patientId: string | null; patientName: string | null }
   onFechar: () => void
   onCriada: (id: string) => void
 }) {
@@ -39,10 +47,11 @@ export function NovaPendencia({
   const [salvando, setSalvando] = useState(false)
 
   useEffect(() => {
+    if (contexto) return // contexto ja decide paciente: nao ha o que listar.
     carregarPacientesAction()
       .then(setPacientes)
       .catch(() => setPacientes([]))
-  }, [])
+  }, [contexto])
 
   useEffect(() => {
     const aoTeclar = (e: KeyboardEvent) => {
@@ -70,7 +79,8 @@ export function NovaPendencia({
       description: descricao.trim() === '' ? null : descricao.trim(),
       dueAt: prazo === '' ? null : deDatetimeLocal(prazo, timezone),
       assignedTo: responsavelId === '' ? null : responsavelId,
-      patientId: pacienteId === '' ? null : pacienteId,
+      patientId: contexto ? contexto.patientId : pacienteId === '' ? null : pacienteId,
+      conversationId: contexto?.conversationId ?? null,
     })
     setSalvando(false)
 
@@ -139,17 +149,26 @@ export function NovaPendencia({
             </label>
           </div>
 
-          <label>
-            <span className="label">Paciente (opcional)</span>
-            <select value={pacienteId} onChange={(e) => setPacienteId(e.target.value)}>
-              <option value="">Pendência geral da clínica</option>
-              {pacientes.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} — {formatPhone(p.phone)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {contexto ? (
+            // Contexto vem da conversa, nao e escolha de quem preenche.
+            <p className="faint">
+              {contexto.patientName
+                ? `Vinculada ao atendimento e a ${contexto.patientName}.`
+                : 'Vinculada a este atendimento — a conversa ainda não tem paciente.'}
+            </p>
+          ) : (
+            <label>
+              <span className="label">Paciente (opcional)</span>
+              <select value={pacienteId} onChange={(e) => setPacienteId(e.target.value)}>
+                <option value="">Pendência geral da clínica</option>
+                {pacientes.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — {formatPhone(p.phone)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {erro ? <p className="error">{erro}</p> : null}
 
